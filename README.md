@@ -1,65 +1,91 @@
 # office-tracker
 
-Track your daily office arrival and departure times from Google Maps Timeline via ADB.
+Track your daily office arrival and departure times. Two approaches included:
 
-## How It Works
+1. **ADB Script** — Pulls historical data from Google Maps Timeline
+2. **Android App** — Logs arrival/departure in real-time via geofencing
 
-The script connects to your Android phone over ADB, opens Google Maps Timeline, and scrapes the UI hierarchy (`uiautomator`) to extract your office visit times for each day. It navigates backwards through your timeline day-by-day.
+## 1. ADB Script (`office_times.py`)
 
-## Prerequisites
+Scrapes Google Maps Timeline via ADB to get past office visit times.
 
-- **Python 3.10+** (uses `list[str]` type hints)
-- **ADB** installed and in your PATH (`brew install android-platform-tools` on macOS)
+### Prerequisites
+
+- **Python 3.10+**
+- **ADB** installed and in PATH (`brew install android-platform-tools` on macOS)
 - **Android phone** connected via USB with USB debugging enabled
 - **Google Maps** with **Location History / Timeline** enabled
 - Google Maps must be open on the **Timeline > Day** view before running
 
-## Usage
+### Usage
 
 ```bash
-# Default: past 10 days
-python3 office_times.py
-
-# Custom range
-python3 office_times.py --days 30
+python3 office_times.py           # past 10 days
+python3 office_times.py --days 30 # custom range
 ```
 
-## Configuration
-
-Edit the constants at the top of `office_times.py` to customize:
+### Configuration
 
 | Constant | Default | Description |
 |---|---|---|
-| `OFFICE_NAME` | `"Work (Primes & Zooms)"` | The place name Google Maps uses for your office |
-| `SCROLL_AREA_TOP` | `1398` | Y-coordinate of the timeline scroll area top |
-| `SCROLL_AREA_BOTTOM` | `2340` | Y-coordinate of the timeline scroll area bottom |
-| `SCROLL_STEP` | `600` | Pixels to scroll per swipe |
+| `OFFICE_NAME` | `"Work (Primes & Zooms)"` | Place name in Google Maps |
+| `SCROLL_AREA_TOP` | `1398` | Timeline scroll area top Y |
+| `SCROLL_AREA_BOTTOM` | `2340` | Timeline scroll area bottom Y |
 
-### Finding Your Office Name
+---
 
-1. Open Google Maps > Timeline > Day
-2. Look at your office visit entry — the name after "Visited" or in the visit card is what you need
-3. Update `OFFICE_NAME` in the script
+## 2. Android App (`android-app/`)
 
-### Adjusting Scroll Coordinates
+A Kotlin/Jetpack Compose app that runs a foreground service during two daily time windows to detect when you arrive at and leave the office.
 
-If the timeline layout differs on your phone:
+### How It Works
 
-1. Run `adb shell uiautomator dump /sdcard/ui.xml && adb pull /sdcard/ui.xml /tmp/ui.xml`
-2. Open `/tmp/ui.xml` and find the scrollable container's `bounds`
-3. Update `SCROLL_AREA_TOP` and `SCROLL_AREA_BOTTOM`
+- **Arrival window** (default 9:00 AM – 12:00 PM): Checks location every 30 seconds. First detection within 100m of office = arrival logged.
+- **Departure window** (default 6:00 PM – 9:00 PM): Checks location every 30 seconds. First detection outside 100m = departure logged.
+- **Foreground service** with `START_STICKY` keeps the process alive.
+- **AlarmManager** re-triggers windows even if the service was killed.
+- **Boot receiver** re-schedules everything after device reboot.
+- **Room database** stores all visits locally.
 
-## Example Output
+### Building
+
+```bash
+cd android-app
+./gradlew assembleDebug
+# APK at: app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `service/OfficeTrackingService.kt` | Foreground service + location detection |
+| `service/WindowScheduler.kt` | AlarmManager-based window scheduling |
+| `service/WindowAlarmReceiver.kt` | Receives alarm broadcasts |
+| `service/BootReceiver.kt` | Re-schedules after reboot |
+| `db/OfficeVisit.kt` | Room entity + DAO |
+| `ui/Screens.kt` | Compose UI (Dashboard, History, Settings) |
+| `util/Prefs.kt` | DataStore preferences |
+
+### Samsung Battery Optimization
+
+To prevent Samsung from killing the service:
+
+1. **Settings → Battery → Background usage limits → Never sleeping apps** → add Office Tracker
+2. **Settings → Apps → Office Tracker → Battery → Unrestricted**
+
+### Customization
+
+The Settings screen in the app lets you configure:
+- Office latitude/longitude
+- Arrival and departure time windows (hour of day)
+- Check interval
+
+---
+
+## Example Output (ADB Script)
 
 ```
-Fetching office times for the past 10 days...
-
-Processing Today...           Arrived: 10:18 am  |  Left: Still here
-Processing Yesterday...       Arrived: 2:40 pm   |  Left: 6:51 pm
-Processing Mon, 24 Aug...     Arrived: 10:50 am  |  Left: 7:17 pm
-Processing Sun, 23 Aug...     Arrived: —         |  Left: —
-Processing Sat, 22 Aug...     Arrived: 9:58 am   |  Left: 6:49 pm
-
 =======================================================
 Day                  Arrived         Last Left
 -------------------------------------------------------
@@ -70,13 +96,6 @@ Sun, 23 Aug 2026     —               —
 Sat, 22 Aug 2026     9:58 am         6:49 pm
 =======================================================
 ```
-
-## Limitations
-
-- Requires Google Maps to be open on the Timeline Day view before execution
-- Depends on the UI layout — may break if Google Maps updates the Timeline UI
-- Scroll coordinates are hardcoded for a specific screen resolution (1080x2340)
-- Only tracks one office location (the `OFFICE_NAME` constant)
 
 ## License
 
