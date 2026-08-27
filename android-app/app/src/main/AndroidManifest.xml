@@ -59,8 +59,14 @@
             <intent-filter>
                 <action android:name="com.office.tracker.WINDOW_START" />
                 <action android:name="com.office.tracker.WINDOW_END" />
+                <action android:name="com.office.tracker.ARRIVAL_CHECK" />
+                <action android:name="com.office.tracker.DEPARTURE_CHECK" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".service.IntegrityCheckReceiver"
+            android:exported="false" />
 
     </application>
 </manifest>

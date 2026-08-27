@@ -35,7 +35,10 @@ class MainActivity : ComponentActivity() {
             ) {
                 OfficeTrackerApp(
                     onStartTracking = { requestPermissionsAndStart() },
-                    onStopTracking = { stopTracking() }
+                    onStopTracking = { stopTracking() },
+                    initialTab = (intent?.getIntExtra(EXTRA_OPEN_TAB, -1) ?: -1).let {
+                        if (it in 0..2) it else null
+                    }
                 )
             }
         }
@@ -43,6 +46,7 @@ class MainActivity : ComponentActivity() {
         // Schedule windows on launch
         WindowScheduler.scheduleToday(this)
         WindowScheduler.scheduleTomorrow(this)
+        WindowScheduler.scheduleIntegrityChecks(this)
     }
 
     private fun requestPermissionsAndStart() {
@@ -88,6 +92,10 @@ class MainActivity : ComponentActivity() {
             action = "com.office.tracker.STOP"
         }
         startForegroundService(intent)
+    }
+
+    companion object {
+        const val EXTRA_OPEN_TAB = "open_tab"
     }
 }
 

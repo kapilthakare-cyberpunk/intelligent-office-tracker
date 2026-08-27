@@ -1,10 +1,12 @@
 package com.office.tracker.util
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import java.util.Calendar
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -24,6 +26,30 @@ object Prefs {
 
     // Check interval in seconds
     val CHECK_INTERVAL = intPreferencesKey("check_interval")
+
+    // Work days: a boolean per day-of-week (Calendar.DAY_OF_WEEK -> true = work day).
+    // Default: Mon-Sat work, Sunday off (matches the user's known office schedule).
+    private val WORK_DAY_KEYS = mapOf(
+        Calendar.SUNDAY to booleanPreferencesKey("work_sun"),
+        Calendar.MONDAY to booleanPreferencesKey("work_mon"),
+        Calendar.TUESDAY to booleanPreferencesKey("work_tue"),
+        Calendar.WEDNESDAY to booleanPreferencesKey("work_wed"),
+        Calendar.THURSDAY to booleanPreferencesKey("work_thu"),
+        Calendar.FRIDAY to booleanPreferencesKey("work_fri"),
+        Calendar.SATURDAY to booleanPreferencesKey("work_sat")
+    )
+
+    private fun defaultWorkDay(dayOfWeek: Int): Boolean = dayOfWeek != Calendar.SUNDAY
+
+    suspend fun isWorkDay(ctx: Context, dayOfWeek: Int): Boolean {
+        val key = WORK_DAY_KEYS[dayOfWeek] ?: return false
+        return ctx.dataStore.data.map { it[key] ?: defaultWorkDay(dayOfWeek) }.first()
+    }
+
+    suspend fun setWorkDay(ctx: Context, dayOfWeek: Int, work: Boolean) {
+        val key = WORK_DAY_KEYS[dayOfWeek] ?: return
+        ctx.dataStore.edit { it[key] = work }
+    }
 
     suspend fun getOfficeLat(ctx: Context): Double =
         ctx.dataStore.data.map { it[OFFICE_LAT] ?: 18.531555 }.first()

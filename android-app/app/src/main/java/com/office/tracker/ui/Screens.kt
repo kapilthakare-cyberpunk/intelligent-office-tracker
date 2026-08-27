@@ -27,9 +27,10 @@ import java.util.*
 @Composable
 fun OfficeTrackerApp(
     onStartTracking: () -> Unit,
-    onStopTracking: () -> Unit
+    onStopTracking: () -> Unit,
+    initialTab: Int? = null
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(initialTab ?: 0) }
 
     Scaffold(
         topBar = {
@@ -197,22 +198,36 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
     val dao = remember { OfficeApp.instance.database.officeVisitDao() }
     val visits by dao.getAllVisits().collectAsState(initial = emptyList())
     var importStatus by remember { mutableStateOf<String?>(null) }
+    var showAddDialog by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        // Import seed button
-        OutlinedButton(
-            onClick = {
-                scope.launch {
-                    val count = com.office.tracker.db.Seeder.importFromSeedFile(context)
-                    importStatus = if (count > 0) "Imported $count visits" else
-                        "No seed file at ${com.office.tracker.db.Seeder.seedFile(context).absolutePath}"
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
+        // Import seed + manual add buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(Icons.Default.Add, null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Import seed data")
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val count = com.office.tracker.db.Seeder.importFromSeedFile(context)
+                        importStatus = if (count > 0) "Imported $count visits" else
+                            "No seed file at ${com.office.tracker.db.Seeder.seedFile(context).absolutePath}"
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Add, null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Import seed")
+            }
+            OutlinedButton(
+                onClick = { showAddDialog = true },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Edit, null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Add/Edit")
+            }
         }
 
         importStatus?.let {
@@ -274,6 +289,101 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+
+    if (showAddDialog) {
+        AddEntryDialog(
+            context = context,
+            onDismiss = { showAddDialog = false },
+            onSaved = { showAddDialog = false; importStatus = "Entry saved" }
+        )
+    }
+}
+
+@Composable
+fun AddEntryDialog(
+    context: android.content.Context,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val dao = OfficeApp.instance.database.officeVisitDao()
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        .format(java.util.Date())
+    var date by remember { mutableStateOf(today) }
+    var arrival by remember { mutableStateOf("") }
+    var departure by remember { mutableStateOf("") }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add / Edit entry") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = date,
+                    onValueChange = { date = it },
+                    label = { Text("Date (yyyy-MM-dd)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = arrival,
+                    onValueChange = { arrival = it },
+                    label = { Text("Arrival (HH:mm, 24h)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = departure,
+                    onValueChange = { departure = it },
+                    label = { Text("Departure (HH:mm, 24h)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val scope = kotlinx.coroutines.CoroutineScope(
+                    kotlinx.coroutines.Dispatchers.IO +
+                        kotlinx.coroutines.SupervisorJob()
+                )
+                scope.launch {
+                    val arr = arrival.trim().ifEmpty { null }
+                    val dep = departure.trim().ifEmpty { null }
+                    val existing = dao.getVisitForDate(date)
+                    val arrTs = arr?.let {
+                        parseTimeMillis(date, it) ?: System.currentTimeMillis()
+                    } ?: existing?.arrivalTimestamp ?: 0L
+                    val depTs = dep?.let {
+                        parseTimeMillis(date, it) ?: System.currentTimeMillis()
+                    } ?: existing?.departureTimestamp ?: 0L
+                    dao.upsert(
+                        com.office.tracker.db.OfficeVisit(
+                            date = date,
+                            arrivalTime = arr,
+                            departureTime = dep,
+                            isCurrentlyAtOffice = false,
+                            arrivalTimestamp = arrTs,
+                            departureTimestamp = depTs
+                        )
+                    )
+                }
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+private fun parseTimeMillis(date: String, hhmm: String): Long? {
+    return try {
+        val p = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        p.setLenient(false)
+        p.parse("$date $hhmm")?.time
+    } catch (e: Exception) {
+        null
     }
 }
 
@@ -348,6 +458,15 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     var departureEnd by remember { mutableStateOf("21") }
     var saved by remember { mutableStateOf(false) }
 
+    // Work days (Calendar.DAY_OF_SUNDAY..SATURDAY)
+    val workDays = remember {
+        mutableStateOf(
+            mapOf(
+                1 to true, 2 to true, 3 to true, 4 to true, 5 to true, 6 to true, 7 to false
+            )
+        )
+    }
+
     // Load current values
     LaunchedEffect(Unit) {
         officeLat = com.office.tracker.util.Prefs.getOfficeLat(context).toString()
@@ -356,6 +475,12 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         arrivalEnd = com.office.tracker.util.Prefs.getArrivalWindowEnd(context).toString()
         departureStart = com.office.tracker.util.Prefs.getDepartureWindowStart(context).toString()
         departureEnd = com.office.tracker.util.Prefs.getDepartureWindowEnd(context).toString()
+        // Load work days
+        val loaded = workDays.value.toMutableMap()
+        for (dow in 1..7) {
+            loaded[dow] = com.office.tracker.util.Prefs.isWorkDay(context, dow)
+        }
+        workDays.value = loaded
     }
 
     LazyColumn(
@@ -431,6 +556,38 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     label = { Text("End hour (0-23)") },
                     modifier = Modifier.weight(1f)
                 )
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Work Days (tracking runs only these days)", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            val dayLabels = listOf(
+                7 to "Sun", 1 to "Mon", 2 to "Tue", 3 to "Wed",
+                4 to "Thu", 5 to "Fri", 6 to "Sat"
+            )
+            val chips = workDays.value
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                dayLabels.chunked(4).forEach { rowDays ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowDays.forEach { (dow, label) ->
+                            FilterChip(
+                                selected = chips[dow] ?: false,
+                                onClick = {
+                                    workDays.value = workDays.value.toMutableMap().apply {
+                                        this[dow] = !(this[dow] ?: false)
+                                    }
+                                },
+                                label = { Text(label) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
             }
         }
 

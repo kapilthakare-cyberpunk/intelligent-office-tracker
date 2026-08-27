@@ -11,6 +11,18 @@ class WindowAlarmReceiver : BroadcastReceiver() {
         val windowType = intent.getStringExtra(WindowScheduler.EXTRA_WINDOW_TYPE) ?: return
         val action = intent.action
 
+        // Integrity-check alarms are also delivered here; route them on.
+        if (action == WindowScheduler.ACTION_INTEGRITY_ARRIVAL ||
+            action == WindowScheduler.ACTION_INTEGRITY_DEPARTURE) {
+            Log.d("WindowAlarmReceiver", "Integrity check alarm: action=$action")
+            val integrity = Intent(context, IntegrityCheckReceiver::class.java).apply {
+                this.action = action
+                putExtra(IntegrityCheckReceiver.EXTRA_TYPE, windowType)
+            }
+            context.sendBroadcast(integrity)
+            return
+        }
+
         Log.d("WindowAlarmReceiver", "Alarm fired: action=$action, window=$windowType")
 
         val serviceIntent = Intent(context, OfficeTrackingService::class.java).apply {
