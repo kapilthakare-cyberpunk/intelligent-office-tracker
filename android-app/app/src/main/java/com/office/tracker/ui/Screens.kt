@@ -1,8 +1,10 @@
 package com.office.tracker.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -11,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.office.tracker.OfficeApp
@@ -231,11 +234,43 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
                 Text("No visits logged yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            // Header row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                items(visits) { visit ->
-                    VisitCard(visit)
+                Text(
+                    "Date",
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Arrived",
+                    modifier = Modifier.width(96.dp),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.End,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Left",
+                    modifier = Modifier.width(96.dp),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.End,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            LazyColumn {
+                itemsIndexed(visits) { index, visit ->
+                    HistoryTableRow(visit, highlighted = index % 2 == 1)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         }
@@ -243,43 +278,59 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun VisitCard(visit: OfficeVisit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+fun HistoryTableRow(visit: OfficeVisit, highlighted: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { m ->
+                if (highlighted) m.background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f))
+                else m
+            }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Date + on-site indicator
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text(
-                    text = visit.date,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Arrived: ${visit.arrivalTime ?: "—"}",
-                    fontSize = 14.sp
-                )
-            }
-
-            Column(horizontalAlignment = Alignment.End) {
-                if (visit.isCurrentlyAtOffice) {
+            Text(
+                text = visit.date,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+            if (visit.isCurrentlyAtOffice) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = MaterialTheme.shapes.small
+                ) {
                     Text(
-                        text = "Still here",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                } else {
-                    Text(
-                        text = "Left: ${visit.departureTime ?: "—"}",
-                        fontSize = 14.sp
+                        "Now",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
         }
+
+        Text(
+            text = visit.arrivalTime ?: "—",
+            modifier = Modifier.width(96.dp),
+            fontSize = 14.sp,
+            textAlign = TextAlign.End,
+            color = if (visit.arrivalTime == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = if (visit.isCurrentlyAtOffice) "—" else (visit.departureTime ?: "—"),
+            modifier = Modifier.width(96.dp),
+            fontSize = 14.sp,
+            textAlign = TextAlign.End,
+            color = if (visit.departureTime == null && !visit.isCurrentlyAtOffice)
+                MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 
