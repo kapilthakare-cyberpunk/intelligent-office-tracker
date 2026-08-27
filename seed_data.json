@@ -1,0 +1,14 @@
+{
+  "visits": [
+    { "date": "2026-08-26", "arrivalTime": "10:18 am", "arrivalTimestamp": 1787719680000, "departureTime": "7:48 pm", "departureTimestamp": 1787753880000 },
+    { "date": "2026-08-25", "arrivalTime": "2:40 pm", "arrivalTimestamp": 1787649000000, "departureTime": "6:51 pm", "departureTimestamp": 1787664060000 },
+    { "date": "2026-08-24", "arrivalTime": "10:50 am", "arrivalTimestamp": 1787548800000, "departureTime": "7:17 pm", "departureTimestamp": 1787579220000 },
+    { "date": "2026-08-23" },
+    { "date": "2026-08-22", "arrivalTime": "9:58 am", "arrivalTimestamp": 1787372880000, "departureTime": "6:49 pm", "departureTimestamp": 1787404740000 },
+    { "date": "2026-08-21", "arrivalTime": "11:01 am", "arrivalTimestamp": 1787302860000, "departureTime": "7:17 pm", "departureTimestamp": 1787332620000 },
+    { "date": "2026-08-20", "arrivalTime": "11:48 am", "arrivalTimestamp": 1787229480000, "departureTime": "8:15 pm", "departureTimestamp": 1787262300000 },
+    { "date": "2026-08-19", "arrivalTime": "10:18 am", "arrivalTimestamp": 1787136660000, "departureTime": "6:56 pm", "departureTimestamp": 1787165760000 },
+    { "date": "2026-08-18", "arrivalTime": "11:35 am", "arrivalTimestamp": 1787049300000, "departureTime": "7:31 pm", "departureTimestamp": 1787081460000 },
+    { "date": "2026-08-17", "arrivalTime": "11:46 am", "arrivalTimestamp": 1786963560000, "departureTime": "7:15 pm", "departureTimestamp": 1786994100000 }
+  ]
+}

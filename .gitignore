@@ -11,3 +11,4 @@ android-app/.idea/
 *.iml
 android-app/gradle/wrapper/gradle-wrapper.jar
 android-app/gradlew.bat
+android-app/.kotlin/

@@ -189,23 +189,54 @@ fun DashboardScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val dao = remember { OfficeApp.instance.database.officeVisitDao() }
     val visits by dao.getAllVisits().collectAsState(initial = emptyList())
+    var importStatus by remember { mutableStateOf<String?>(null) }
 
-    if (visits.isEmpty()) {
-        Box(
-            modifier = modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        // Import seed button
+        OutlinedButton(
+            onClick = {
+                scope.launch {
+                    val count = com.office.tracker.db.Seeder.importFromSeedFile(context)
+                    importStatus = if (count > 0) "Imported $count visits" else
+                        "No seed file at ${com.office.tracker.db.Seeder.seedFile(context).absolutePath}"
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text("No visits logged yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Default.Add, null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Import seed data")
         }
-    } else {
-        LazyColumn(
-            modifier = modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(visits) { visit ->
-                VisitCard(visit)
+
+        importStatus?.let {
+            Text(
+                it,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (visits.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("No visits logged yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(visits) { visit ->
+                    VisitCard(visit)
+                }
             }
         }
     }
