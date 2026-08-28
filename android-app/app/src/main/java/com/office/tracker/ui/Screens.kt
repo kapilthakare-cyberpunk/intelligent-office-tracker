@@ -95,11 +95,12 @@ fun DashboardScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Status card
+        val atOffice = todayVisit?.isCurrentlyAtOffice == true
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
-                containerColor = if (todayVisit?.isCurrentlyAtOffice == true)
-                    MaterialTheme.colorScheme.primaryContainer
+                containerColor = if (atOffice)
+                    MaterialTheme.colorScheme.tertiaryContainer
                 else
                     MaterialTheme.colorScheme.surfaceVariant
             )
@@ -108,10 +109,20 @@ fun DashboardScreen(
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (atOffice) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "At office",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
                 Text(
-                    text = if (todayVisit?.isCurrentlyAtOffice == true) "At Office" else "Not at Office",
+                    text = if (atOffice) "At Office" else "Not at Office",
                     fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = if (atOffice) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurface
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))

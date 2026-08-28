@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1565C0</color>
+    <!-- Adaptive launcher icon background: deep professional blue -->
+    <color name="ic_launcher_background">#1B4F8A</color>
+
+    <!-- Brand palette (also used by the Compose Material 3 theme) -->
+    <color name="brand_primary">#1B4F8A</color>
+    <color name="brand_on_primary">#FFFFFF</color>
+    <color name="brand_primary_container">#D6E3FF</color>
+    <color name="brand_on_primary_container">#001B3C</color>
+    <color name="brand_secondary">#2B6B4F</color>
+    <color name="brand_on_secondary">#FFFFFF</color>
+    <color name="brand_secondary_container">#CBEEDB</color>
+    <color name="brand_on_secondary_container">#002110</color>
+    <color name="brand_tertiary">#8A4A63</color>
+    <color name="brand_on_tertiary">#FFFFFF</color>
+    <color name="brand_tertiary_container">#FFD9E4</color>
+    <color name="brand_on_tertiary_container">#3D001F</color>
+    <color name="brand_error">#BA1A1A</color>
+    <color name="brand_on_error">#FFFFFF</color>
+    <color name="brand_error_container">#FFDAD6</color>
+    <color name="brand_on_error_container">#410002</color>
+    <color name="brand_accent">#ED6A5A</color>
 </resources>

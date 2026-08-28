@@ -30,9 +30,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            MaterialTheme(
-                colorScheme = dynamicColorScheme()
-            ) {
+            // Brand Material 3 theme (deep-blue professional-clock identity).
+            // Switch back to dynamic system colors anytime by calling
+            // dynamicColorScheme() directly instead of OfficeTrackerTheme.
+            OfficeTrackerTheme {
                 OfficeTrackerApp(
                     onStartTracking = { requestPermissionsAndStart() },
                     onStopTracking = { stopTracking() },
@@ -97,9 +98,4 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_TAB = "open_tab"
     }
-}
-
-@Composable
-fun dynamicColorScheme(): ColorScheme {
-    return MaterialTheme.colorScheme
 }

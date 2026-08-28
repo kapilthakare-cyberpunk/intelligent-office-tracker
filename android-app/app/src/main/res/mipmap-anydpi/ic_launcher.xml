@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Office Tracker — legacy (pre-API 26) launcher icon.
+    A rounded-square brand-blue tile with the white/teal clock glyph.
+    Serves as the fallback launcher icon on devices without adaptive-icon support.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Rounded-square tile -->
+    <path
+        android:fillColor="#1B4F8A"
+        android:pathData="M28,24 A12,12 0 0 1 40,12 L68,12 A12,12 0 0 1 80,24 L80,84 A12,12 0 0 1 68,96 L40,96 A12,12 0 0 1 28,84 Z"/>
+
+    <!-- Outer clock ring -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,32 C65.05,32 74,40.95 74,52 C74,63.05 65.05,72 54,72 C42.95,72 34,63.05 34,52 C34,40.95 42.95,32 54,32 Z M54,38 C46.27,38 40,44.27 40,52 C40,59.73 46.27,66 54,66 C61.73,66 68,59.73 68,52 C68,44.27 61.73,38 54,38 Z"/>
+
+    <!-- Minute hand (to 12) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53,45 L55,45 L55,51 L57,53.5 L57,55 L51,55 L51,53.5 L53,51 Z"/>
+
+    <!-- Hour hand (to ~9) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,47 L54,48 L54,53 L52,51.5 Z"/>
+
+    <!-- Center hub -->
+    <path
+        android:fillColor="#ED6A5A"
+        android:pathData="M52.5,50.5 A1.5,1.5 0 1,0 55.5,50.5 A1.5,1.5 0 1,0 52.5,50.5 Z"/>
+
+    <!-- Tick marks 12, 3, 6, 9 -->
+    <path android:fillColor="#FFFFFF" android:pathData="M53,41 L55,41 L55,45 L53,45 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M62,50 L62,52 L60,52 L60,50 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M60,54 L62,54 L62,56 L60,56 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M46,50 L48,50 L48,52 L46,52 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M46,54 L48,54 L48,56 L46,56 Z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M53,59 L55,59 L55,63 L53,63 Z"/>
+</vector>
