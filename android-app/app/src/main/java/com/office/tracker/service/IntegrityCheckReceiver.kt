@@ -72,7 +72,7 @@ class IntegrityCheckReceiver : BroadcastReceiver() {
                             context,
                             NOTIF_ID_DEPARTURE,
                             "Departure not logged",
-                            "You arrived at ${todayVisit.arrivalTime} but no departure " +
+                            "You arrived at ${com.office.tracker.util.format12h(todayVisit.arrivalTime) ?: todayVisit.arrivalTime} but no departure " +
                                 "was recorded. Did you leave early?",
                             "Log departure"
                         )

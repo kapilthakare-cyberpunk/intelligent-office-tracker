@@ -116,16 +116,16 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                todayVisit?.arrivalTime?.let { time ->
+                todayVisit?.arrivalTime?.let {
                     Text(
-                        text = "Arrived: $time",
+                        text = "Arrived: ${com.office.tracker.util.format12h(it) ?: it}",
                         fontSize = 20.sp
                     )
                 }
 
-                todayVisit?.departureTime?.let { time ->
+                todayVisit?.departureTime?.let {
                     Text(
-                        text = "Left: $time",
+                        text = "Left: ${com.office.tracker.util.format12h(it) ?: it}",
                         fontSize = 20.sp
                     )
                 }
@@ -427,14 +427,14 @@ fun HistoryTableRow(visit: OfficeVisit, highlighted: Boolean) {
         }
 
         Text(
-            text = visit.arrivalTime ?: "—",
+            text = com.office.tracker.util.format12h(visit.arrivalTime) ?: "—",
             modifier = Modifier.width(96.dp),
             fontSize = 14.sp,
             textAlign = TextAlign.End,
             color = if (visit.arrivalTime == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
         )
         Text(
-            text = if (visit.isCurrentlyAtOffice) "—" else (visit.departureTime ?: "—"),
+            text = if (visit.isCurrentlyAtOffice) "—" else (com.office.tracker.util.format12h(visit.departureTime) ?: "—"),
             modifier = Modifier.width(96.dp),
             fontSize = 14.sp,
             textAlign = TextAlign.End,
