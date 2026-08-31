@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.office.tracker.util.Prefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,9 +52,35 @@ object WindowScheduler {
     fun scheduleToday(context: Context) {
         // Cancel then schedule inside a coroutine (work-day read is suspend).
         val now = Calendar.getInstance()
-        scheduleWindowSet(context, now, offsetDays = 0,
-            arrivalStartH = 9, arrivalEndH = 12,
-            departureStartH = 18, departureEndH = 21)
+        cancelAll(context)
+        scope.launch {
+            val aStart = Prefs.getArrivalWindowStart(context)
+            val aEnd = Prefs.getArrivalWindowEnd(context)
+            val dStart = Prefs.getDepartureWindowStart(context)
+            val dEnd = Prefs.getDepartureWindowEnd(context)
+
+            scheduleWindowSet(context, now, offsetDays = 0,
+                arrivalStartH = aStart, arrivalEndH = aEnd,
+                departureStartH = dStart, departureEndH = dEnd)
+
+            // If we are already INSIDE an active window right now, kick off the
+            // tracking service immediately. This is the reliable path on
+            // Android 12+ where a background alarm can't start a foreground
+            // service — e.g. the user opens the app after 9am, so the 9am
+            // setAlarmClock exemption is in the past and would otherwise never
+            // fire, leaving today un-tracked (no auto punch-in/out).
+            if (Prefs.isWorkDay(context, now.get(Calendar.DAY_OF_WEEK))) {
+                val hour = now.get(Calendar.HOUR_OF_DAY)
+                val windowType =
+                    if (hour >= aStart && hour < aEnd) WINDOW_ARRIVAL
+                    else if (hour >= dStart && hour < dEnd) WINDOW_DEPARTURE
+                    else null
+                if (windowType != null) {
+                    Log.d(TAG, "scheduleToday: inside $windowType window; starting service now")
+                    startTrackingService(context, windowType)
+                }
+            }
+        }
         scheduleIntegrityChecks(context)
     }
 
@@ -61,10 +88,31 @@ object WindowScheduler {
         val tomorrow = Calendar.getInstance().apply {
             add(Calendar.DAY_OF_YEAR, 1)
         }
-        scheduleWindowSet(context, tomorrow, offsetDays = 1,
-            arrivalStartH = 9, arrivalEndH = 12,
-            departureStartH = 18, departureEndH = 21)
-        scheduleIntegrityChecks(context)
+        scope.launch {
+            val aStart = Prefs.getArrivalWindowStart(context)
+            val aEnd = Prefs.getArrivalWindowEnd(context)
+            val dStart = Prefs.getDepartureWindowStart(context)
+            val dEnd = Prefs.getDepartureWindowEnd(context)
+            scheduleWindowSet(context, tomorrow, offsetDays = 1,
+                arrivalStartH = aStart, arrivalEndH = aEnd,
+                departureStartH = dStart, departureEndH = dEnd)
+        }
+    }
+
+    /**
+     * Starts the foreground tracking service for the given window.
+     * Safe to call from any context (app open, boot, receiver).
+     */
+    fun startTrackingService(context: Context, windowType: String) {
+        val serviceIntent = Intent(context, OfficeTrackingService::class.java).apply {
+            action = ACTION_WINDOW_START
+            putExtra(EXTRA_WINDOW_TYPE, windowType)
+        }
+        try {
+            ContextCompat.startForegroundService(context, serviceIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not start foreground service: ${e.message}")
+        }
     }
 
     /**
@@ -84,8 +132,6 @@ object WindowScheduler {
                 Log.d(TAG, "Skipping windows for non-work day (dow=${base.get(Calendar.DAY_OF_WEEK)})")
                 return@launch
             }
-
-            cancelAll(context)
 
             val arrivalStart = atHour(base, arrivalStartH)
             val arrivalEnd = atHour(base, arrivalEndH)
