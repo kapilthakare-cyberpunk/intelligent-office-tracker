@@ -27,6 +27,8 @@ class OfficeTrackingService : Service() {
     private var activeWindow: String? = null // "arrival" or "departure"
     private var hasLoggedArrival = false
     private var hasLoggedDeparture = false
+    private var outsideCount = 0
+    private val DEPARTURE_DEBOUNCE_COUNT = 3
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -69,6 +71,7 @@ class OfficeTrackingService : Service() {
         activeWindow = windowType
         hasLoggedArrival = false
         hasLoggedDeparture = false
+        outsideCount = 0
 
         Log.d(TAG, "Starting $windowType window")
 
@@ -177,21 +180,26 @@ class OfficeTrackingService : Service() {
                 }
                 "departure" -> {
                     if (!isAtOffice && !hasLoggedDeparture) {
-                        // Just left office
-                        val existing = dao.getVisitForDate(today)
-                        if (existing != null && existing.isCurrentlyAtOffice) {
-                            hasLoggedDeparture = true
-                            dao.setDeparture(today, now, nowMillis)
-                            Log.d(TAG, "DEPARTURE logged at $now (${distance.toInt()}m from office)")
-                            updateNotification("Left office at $now")
+                        outsideCount++
+                        Log.d(TAG, "Outside reading $outsideCount/$DEPARTURE_DEBOUNCE_COUNT (${distance.toInt()}m)")
+                        if (outsideCount >= DEPARTURE_DEBOUNCE_COUNT) {
+                            val existing = dao.getVisitForDate(today)
+                            if (existing != null && existing.isCurrentlyAtOffice) {
+                                hasLoggedDeparture = true
+                                dao.setDeparture(today, now, nowMillis)
+                                Log.d(TAG, "DEPARTURE logged at $now (${distance.toInt()}m from office)")
+                                updateNotification("Left office at $now")
+                            }
                         }
                     } else if (isAtOffice && hasLoggedDeparture) {
-                        // Came back during departure window
                         hasLoggedDeparture = false
                         hasLoggedArrival = true
+                        outsideCount = 0
                         dao.setArrival(today, now, nowMillis)
                         Log.d(TAG, "RE-ARRIVAL logged at $now")
                         updateNotification("Back at office since $now")
+                    } else if (isAtOffice && !hasLoggedDeparture) {
+                        outsideCount = 0
                     }
                 }
             }
