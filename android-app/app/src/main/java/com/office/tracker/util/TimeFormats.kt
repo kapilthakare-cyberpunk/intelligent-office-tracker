@@ -9,9 +9,12 @@ import java.util.Locale
 private val CLOCK = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
 private val BBCLOCK = DateTimeFormatter.ofPattern("h:mm a", Locale.ROOT)
 
+private fun localTimeOf(millis: Long): LocalTime =
+    java.time.ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault()).toLocalTime()
+
 /** "HH:mm" string from epoch millis (display-agnostic, stable). */
 fun formatHHmm(millis: Long): String =
-    LocalTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(CLOCK)
+    localTimeOf(millis).format(CLOCK)
 
 /** Pick the best display source: exact millis when available, else the stored string. */
 fun displayTime(stored: String?, millis: Long): String? =
@@ -19,7 +22,7 @@ fun displayTime(stored: String?, millis: Long): String? =
 
 /** 12-hour display like "10:18 am" from epoch millis. */
 fun format12hMillis(millis: Long): String =
-    LocalTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(BBCLOCK).lowercase(Locale.ROOT)
+    localTimeOf(millis).format(BBCLOCK).lowercase(Locale.ROOT)
 
 /**
  * Normalizes any stored time string into a consistent 12-hour display form
@@ -53,4 +56,4 @@ fun format12h(raw: String?): String? {
 
 /** Engineering helper used by integration/backfill code. */
 fun localDateTimeFromMillis(millis: Long): LocalDateTime =
-    LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault())
+    java.time.ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault()).toLocalDateTime()
