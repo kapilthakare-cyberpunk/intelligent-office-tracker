@@ -43,13 +43,15 @@ class WindowStateMachineTest {
     @Test
     fun departureNeedsDebounceAndCurrentAtOffice() {
         // Not at office in DB -> no departure even after 3 outside fixes.
-        var (state, event) = sm.onLocation(WindowType.DEPARTURE, false, noVisit, WindowState(), now)
-        repeat(2) { state = sm.onLocation(WindowType.DEPARTURE, false, noVisit, state.copy(outsideCount = it + 1), now).first }
+        var state = WindowState()
+        val event = sm.onLocation(WindowType.DEPARTURE, false, noVisit, state, now).second
+        repeat(2) { state = sm.onLocation(WindowType.DEPARTURE, false, noVisit, state, now).first }
         assertEquals(WindowEvent.Noop, event)
 
         val v = visit(arrived = true, atOffice = true)
-        repeat(2) { state = sm.onLocation(WindowType.DEPARTURE, false, v, WindowState(), now).first }
-        val (finalState, finalEvent) = sm.onLocation(WindowType.DEPARTURE, false, v, state, now)
+        var s2 = WindowState()
+        repeat(2) { s2 = sm.onLocation(WindowType.DEPARTURE, false, v, s2, now).first }
+        val (finalState, finalEvent) = sm.onLocation(WindowType.DEPARTURE, false, v, s2, now)
         assertEquals(WindowEvent.LogDeparture(now), finalEvent)
         assertTrue(finalState.hasLoggedDeparture)
     }
