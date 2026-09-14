@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.office.tracker.util.Prefs
@@ -169,7 +170,23 @@ object WindowScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val manager = context.getSystemService(AlarmManager::class.java)
-        manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+        setExact(manager, at, pi)
+    }
+
+    /**
+     * Schedule an exact alarm, degrading to a near-exact window when the user
+     * hasn't granted exact-alarm access (or revoked it) on Android 12+.
+     */
+    private fun setExact(manager: AlarmManager, at: Long, pi: PendingIntent) {
+        if (Build.VERSION.SDK_INT >= 31 && !manager.canScheduleExactAlarms()) {
+            manager.setWindow(AlarmManager.RTC_WAKEUP, at, 60_000L, pi)
+            return
+        }
+        try {
+            manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+        } catch (e: SecurityException) {
+            manager.setWindow(AlarmManager.RTC_WAKEUP, at, 60_000L, pi)
+        }
     }
 
     private fun scheduleAlarmClock(context: Context, triggerAtMillis: Long, showCode: Int, editCode: Int) {
@@ -190,10 +207,14 @@ object WindowScheduler {
             context, editCode, editIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        alarmManager.setAlarmClock(
-            AlarmManager.AlarmClockInfo(triggerAtMillis, showPi),
-            editPi
-        )
+        try {
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(triggerAtMillis, showPi),
+                editPi
+            )
+        } catch (e: SecurityException) {
+            alarmManager.setWindow(AlarmManager.RTC_WAKEUP, triggerAtMillis, 60_000L, editPi)
+        }
     }
 
     /**
