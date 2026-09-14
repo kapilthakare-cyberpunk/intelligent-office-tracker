@@ -17,3 +17,12 @@ Test strategy
  - On-device checks (debug build on S26): backfill import, backup export, DB verification via run-as.
 
 Branch: master (repo default). Commit per chunk; push after green (or push then fix red).
+
+Non-Shizuku compatibility (added 2026-09-14)
+ - The Android app itself requires NO Shizuku, root, or adb: tracking uses standard
+   location + foreground-service + WorkManager; backup uses HTTPS to GitHub/Drive;
+   import uses the standard Android file APIs. Verified: no shizuku/rikka/root
+   references in android-app sources or manifest; permissions are all standard runtime
+   permissions.  => app runs with full features on plain, unrooted phones.
+ - Shizuku is used ONLY by agent-side tooling (office_times.py Maps UI automation,
+   keepmaps.sh focus watcher, device scans). These are helpers, not app features.
