@@ -1,83 +1,116 @@
 #!/usr/bin/env python3
 """
 Get office arrival and last departure times for the past N days
-from Google Maps Timeline via ADB UI automation.
+from Google Maps Timeline via Shizuku UI automation (runs on-device in proot).
 
 Prerequisites:
-  - Phone connected via ADB
-  - Google Maps open on Timeline (Day) view
+  - Shizuku running (uid 2000/shell) on the phone
+  - Google Maps installed and signed in (Kapil Thakare)
   - Location History enabled
 
 Usage:
   python3 office_times.py [--days 10]
 """
 
+import re
 import subprocess
 import sys
 import time
-import xml.etree.ElementTree as ET
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
 OFFICE_NAME = "Work (Primes & Zooms)"
 OFFICE_KEYWORDS = ("primes", "zooms", "work (", "work -", "work –")
-
-def is_office_desc(desc: str) -> bool:
-    low = desc.lower()
-    return OFFICE_NAME in desc or any(k in low for k in OFFICE_KEYWORDS)
+MAPS_ACTIVITY = "com.google.android.apps.maps/com.google.android.maps.MapsActivity"
 DUMP_PATH = "/sdcard/timeline_dump.xml"
-LOCAL_DUMP = "/tmp/timeline_dump.xml"
 SCROLL_AREA_TOP = 1398
 SCROLL_AREA_BOTTOM = 2340
 SCROLL_STEP = 600
 
 
-def adb(cmd: str, timeout: int = 10) -> str:
-    """Run an ADB shell command and return stdout."""
-    result = subprocess.run(
-        ["adb", "shell", cmd],
-        capture_output=True, text=True, timeout=40
-    )
-    return result.stdout.strip()
+def is_office_desc(desc: str) -> bool:
+    low = desc.lower()
+    return OFFICE_NAME.lower() in low or any(k in low for k in OFFICE_KEYWORDS)
+
+
+def sh(cmd: str, timeout: int = 20) -> str:
+    """Run a privileged shell command on the phone via shizuku, with retries."""
+    for _ in range(5):
+        try:
+            result = subprocess.run(
+                ["shizuku", "sh", "-c", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            out = (result.stdout or "").strip()
+            if out:
+                return out
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        time.sleep(1.5)
+    return ""
+
+
+def clean_attr(v: str) -> str:
+    """Decode uiautomator attribute encodings (&#10; entities, %XX escapes)."""
+    v = v.replace("&#10;", "\n").replace("&#13;", "\r")
+    v = v.replace("&amp;", "&").replace("&quot;", '"')
+    v = v.replace("&lt;", "<").replace("&gt;", ">")
+    try:
+        return urllib.parse.unquote(v)
+    except Exception:
+        return v
 
 
 def lift_maps():
     """Re-raise Maps if something stole the foreground (agent UI, launcher)."""
-    adb("input keyevent KEYCODE_HOME")
+    sh("input keyevent KEYCODE_HOME")
     time.sleep(0.8)
-    adb("am start -n com.google.android.apps.maps/.MapsActivity")
+    sh(f"am start -n {MAPS_ACTIVITY}")
     time.sleep(3)
+
 
 def dump_ui() -> list[dict]:
     """Dump the current UI hierarchy and return parsed nodes.
 
-    Self-heals focus: if the dump is empty or not Maps (the agent UI on this
-    phone aggressively re-takes the foreground), raise Maps again and re-dump.
+    Parsing happens ON-DEVICE (grep) so we never need to transfer the raw XML
+    (the bridge caps stdout at ~64KB, which previously corrupted multi-byte
+    UTF-8 during chunked pulls).  Self-heals focus: if the dump is not Maps,
+    raise Maps again and re-dump.
     """
     for attempt in range(4):
-        adb(f"uiautomator dump {DUMP_PATH}")
+        sh(f"uiautomator dump {DUMP_PATH}")
         time.sleep(0.5)
-        subprocess.run(["adb", "pull", DUMP_PATH, LOCAL_DUMP],
-                        capture_output=True, timeout=10)
-        time.sleep(0.3)
-        try:
-            tree = ET.parse(LOCAL_DUMP)
-        except ET.ParseError:
+        pkg = sh(f"grep -oE 'package=\"[^\"]+\"' {DUMP_PATH} | head -1")
+        if "com.google.android.apps.maps" not in pkg:
             lift_maps()
             continue
-        root = tree.getroot()
-        if root.get("package") != "com.google.android.apps.maps" or len(root) < 5:
-            lift_maps()
-            continue
+
         nodes = []
-        for node in root.iter("node"):
-            text = node.get("text", "")
-            desc = node.get("content-desc", "")
-            bounds = node.get("bounds", "")
-            if text or desc:
-                nodes.append({"text": text, "desc": desc, "bounds": bounds})
+        descs_out = sh(f"grep -oE 'content-desc=\"[^\"]*\"' {DUMP_PATH}")
+        for line in descs_out.splitlines():
+            m = re.match(r'content-desc="(.*)"$', line)
+            if m and m.group(1).strip():
+                nodes.append({"text": "", "desc": clean_attr(m.group(1)), "bounds": ""})
+        texts_out = sh(f"grep -oE 'text=\"[^\"]*\"' {DUMP_PATH}")
+        for line in texts_out.splitlines():
+            m = re.match(r'text="(.*)"$', line)
+            if m and m.group(1).strip():
+                nodes.append({"text": clean_attr(m.group(1)), "desc": "", "bounds": ""})
+
+        if not nodes:
+            lift_maps()
+            continue
         return nodes
     return []
+
+
+def find_bounds(desc: str) -> str:
+    """Find the bounds attribute of the node whose content-desc == desc."""
+    pat = f'content-desc="{desc}"[^>]*bounds="[^"]*"'
+    out = sh(f"grep -oE '{pat}' {DUMP_PATH} | head -1")
+    m = re.search(r'bounds="([^"]+)"', out)
+    return m.group(1) if m else ""
 
 
 def parse_bounds(bounds_str: str) -> tuple[int, int, int, int]:
@@ -93,10 +126,7 @@ def center_of(bounds_str: str) -> tuple[int, int]:
 
 def extract_time_from_desc(desc: str) -> list[str]:
     """Extract time strings like '10:18 am' from a content-desc."""
-    import re
-    # Match times like 10:18 am, 2:06 pm, 12:07 am
-    times = re.findall(r'(\d{1,2}:\d{2}\s*(?:am|pm))', desc, re.IGNORECASE)
-    return times
+    return re.findall(r'(\d{1,2}:\d{2}\s*(?:am|pm))', desc, re.IGNORECASE)
 
 
 def scroll_down():
@@ -104,7 +134,7 @@ def scroll_down():
     mid_x = 540
     start_y = SCROLL_AREA_TOP + 100
     end_y = SCROLL_AREA_TOP + 100 - SCROLL_STEP
-    adb(f"input swipe {mid_x} {start_y} {mid_x} {end_y} 300")
+    sh(f"input swipe {mid_x} {start_y} {mid_x} {end_y} 300")
     time.sleep(1)
 
 
@@ -113,7 +143,7 @@ def scroll_up():
     mid_x = 540
     start_y = SCROLL_AREA_TOP + 100
     end_y = SCROLL_AREA_BOTTOM - 100
-    adb(f"input swipe {mid_x} {start_y} {mid_x} {end_y} 300")
+    sh(f"input swipe {mid_x} {start_y} {mid_x} {end_y} 300")
     time.sleep(1)
 
 
@@ -127,11 +157,12 @@ def get_all_timeline_entries() -> list[str]:
         new_found = False
         for n in nodes:
             desc = n["desc"]
+            low = desc.lower()
             if desc and desc not in seen:
                 # Only collect timeline-relevant entries (contain times or travel info)
-                if any(kw in desc for kw in ["am", "pm", "Motorcycling", "Driving",
-                                               "Walking", "Transit", "Work", "Home",
-                                               "Visited", "Missing", "Add"]):
+                if any(kw in low for kw in ["am", "pm", "motorcycling", "driving",
+                                            "walking", "transit", "work", "home",
+                                            "visited", "missing", "add"]):
                     seen.add(desc)
                     all_descs.append(desc)
                     new_found = True
@@ -189,13 +220,22 @@ def find_office_events(entries: list[str]) -> dict:
 
 def click_previous_day():
     """Click the 'Previous day' button."""
+    bounds = find_bounds("Previous day")
+    if bounds:
+        cx, cy = center_of(bounds)
+        sh(f"input tap {cx} {cy}")
+        time.sleep(2.5)  # Wait for timeline to load
+        return True
+    # Also try text label "Previous day" (some builds expose it as text)
     nodes = dump_ui()
     for n in nodes:
-        if n["desc"] == "Previous day":
-            cx, cy = center_of(n["bounds"])
-            adb(f"input tap {cx} {cy}")
-            time.sleep(2.5)  # Wait for timeline to load
-            return True
+        if n["text"] == "Previous day":
+            b = find_bounds(n["text"])
+            if b:
+                cx, cy = center_of(b)
+                sh(f"input tap {cx} {cy}")
+                time.sleep(2.5)
+                return True
     return False
 
 
@@ -223,7 +263,8 @@ def main():
     print(f"Fetching office times for the past {days} days...\n")
     print("Make sure Google Maps Timeline (Day view) is open on your phone.\n")
 
-    # Small delay to let user verify
+    # Make sure Maps is in front before we start.
+    lift_maps()
     time.sleep(2)
 
     for i in range(days):
