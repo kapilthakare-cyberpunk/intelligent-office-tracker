@@ -1,0 +1,24 @@
+name: Android CI
+on:
+  push:
+    paths: ["android-app/**", ".github/workflows/android.yml"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Build + unit tests
+        run: ./gradlew assembleDebug testDebugUnitTest --no-daemon
+      - name: Lint
+        run: ./gradlew lintDebug --no-daemon
