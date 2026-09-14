@@ -2,6 +2,7 @@ package com.office.tracker.backup
 
 import android.content.Context
 import android.util.Log
+import com.office.tracker.OfficeApp
 import com.office.tracker.db.OfficeVisit
 import com.office.tracker.util.Prefs
 import kotlinx.coroutines.flow.first
@@ -90,7 +91,7 @@ object BackupManager {
                 .put("content", content)
                 .put("branch", branch)
         )
-        if (create.first == 422) {
+        if (create.code == 422) {
             sha = getSha(owner, repo, token, path)
         }
         if (sha != null) {
@@ -102,7 +103,7 @@ object BackupManager {
                     .put("sha", sha)
                     .put("branch", branch)
             )
-            if (update.first !in 200..299) throw RuntimeException("GitHub update failed: ${update.first}")
+            if (update.code !in 200..299) throw RuntimeException("GitHub update failed: ${update.code}")
         }
         return "backups/$path"
     }

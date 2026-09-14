@@ -20,6 +20,7 @@ import com.office.tracker.db.VisitRepository
 import com.office.tracker.util.Prefs
 import com.office.tracker.util.formatHHmm
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch

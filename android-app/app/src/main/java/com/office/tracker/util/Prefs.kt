@@ -121,6 +121,13 @@ object Prefs {
         ctx.dataStore.edit { it[BACKUP_ENABLED] = enabled }
     }
 
+    suspend fun getBackupLast(ctx: Context): Long =
+        ctx.dataStore.data.map { it[BACKUP_LAST] ?: 0L }.first()
+
+    suspend fun setBackupLast(ctx: Context, millis: Long) {
+        ctx.dataStore.edit { it[BACKUP_LAST] = millis }
+    }
+
     suspend fun getGitHubToken(ctx: Context): String =
         ctx.dataStore.data.map { it[GH_TOKEN] ?: "" }.first()
 

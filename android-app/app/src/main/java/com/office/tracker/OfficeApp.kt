@@ -7,7 +7,6 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.office.tracker.backup.BackupWorker
-import java.util.concurrent.TimeUnit
 import com.office.tracker.db.AppDatabase
 
 class OfficeApp : Application() {
@@ -25,7 +24,6 @@ class OfficeApp : Application() {
 
     private fun scheduleDailyBackup() {
         val request = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.DAYS)
-            .setFlexInterval(2, TimeUnit.HOURS)
             .build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "office_backup",
