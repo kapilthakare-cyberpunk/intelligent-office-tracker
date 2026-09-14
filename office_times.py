@@ -20,6 +20,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 OFFICE_NAME = "Work (Primes & Zooms)"
+OFFICE_KEYWORDS = ("primes", "zooms", "work (", "work -", "work –")
+
+def is_office_desc(desc: str) -> bool:
+    low = desc.lower()
+    return OFFICE_NAME in desc or any(k in low for k in OFFICE_KEYWORDS)
 DUMP_PATH = "/sdcard/timeline_dump.xml"
 LOCAL_DUMP = "/tmp/timeline_dump.xml"
 SCROLL_AREA_TOP = 1398
@@ -31,29 +36,48 @@ def adb(cmd: str, timeout: int = 10) -> str:
     """Run an ADB shell command and return stdout."""
     result = subprocess.run(
         ["adb", "shell", cmd],
-        capture_output=True, text=True, timeout=timeout
+        capture_output=True, text=True, timeout=40
     )
     return result.stdout.strip()
 
 
-def dump_ui() -> list[dict]:
-    """Dump the current UI hierarchy and return parsed nodes."""
-    adb(f"uiautomator dump {DUMP_PATH}")
-    time.sleep(0.5)
-    subprocess.run(["adb", "pull", DUMP_PATH, LOCAL_DUMP],
-                    capture_output=True, timeout=10)
-    time.sleep(0.3)
+def lift_maps():
+    """Re-raise Maps if something stole the foreground (agent UI, launcher)."""
+    adb("input keyevent KEYCODE_HOME")
+    time.sleep(0.8)
+    adb("am start -n com.google.android.apps.maps/.MapsActivity")
+    time.sleep(3)
 
-    tree = ET.parse(LOCAL_DUMP)
-    root = tree.getroot()
-    nodes = []
-    for node in root.iter("node"):
-        text = node.get("text", "")
-        desc = node.get("content-desc", "")
-        bounds = node.get("bounds", "")
-        if text or desc:
-            nodes.append({"text": text, "desc": desc, "bounds": bounds})
-    return nodes
+def dump_ui() -> list[dict]:
+    """Dump the current UI hierarchy and return parsed nodes.
+
+    Self-heals focus: if the dump is empty or not Maps (the agent UI on this
+    phone aggressively re-takes the foreground), raise Maps again and re-dump.
+    """
+    for attempt in range(4):
+        adb(f"uiautomator dump {DUMP_PATH}")
+        time.sleep(0.5)
+        subprocess.run(["adb", "pull", DUMP_PATH, LOCAL_DUMP],
+                        capture_output=True, timeout=10)
+        time.sleep(0.3)
+        try:
+            tree = ET.parse(LOCAL_DUMP)
+        except ET.ParseError:
+            lift_maps()
+            continue
+        root = tree.getroot()
+        if root.get("package") != "com.google.android.apps.maps" or len(root) < 5:
+            lift_maps()
+            continue
+        nodes = []
+        for node in root.iter("node"):
+            text = node.get("text", "")
+            desc = node.get("content-desc", "")
+            bounds = node.get("bounds", "")
+            if text or desc:
+                nodes.append({"text": text, "desc": desc, "bounds": bounds})
+        return nodes
+    return []
 
 
 def parse_bounds(bounds_str: str) -> tuple[int, int, int, int]:
@@ -130,7 +154,7 @@ def find_office_events(entries: list[str]) -> dict:
     currently_at_office = False
 
     for desc in entries:
-        if OFFICE_NAME not in desc:
+        if not is_office_desc(desc):
             continue
 
         # Check if user is currently at office
@@ -233,6 +257,12 @@ def main():
     for r in results:
         print(f"{r['day']:<20} {r['arrival']:<15} {r['departure']:<15}")
     print("=" * 55)
+    # Machine-readable output for backfill
+    import json
+    out = {"results": results}
+    with open("/root/office_times_results.json", "w") as f:
+        json.dump(out, f, indent=2)
+    print("Saved: /root/office_times_results.json")
 
 
 if __name__ == "__main__":

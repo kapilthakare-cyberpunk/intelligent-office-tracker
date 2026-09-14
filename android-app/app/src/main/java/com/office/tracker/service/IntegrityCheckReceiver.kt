@@ -84,8 +84,8 @@ class IntegrityCheckReceiver : BroadcastReceiver() {
             .setPriority(Notification.PRIORITY_HIGH)
             .addAction(Notification.Action.Builder(null, actionLabel, contentIntent).build())
             .build()
-        context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            .notify(id, notification)
+        (context.getSystemService(Context.NOTIFICATION_SERVICE)
+                as android.app.NotificationManager).notify(id, notification)
     }
 
     companion object {

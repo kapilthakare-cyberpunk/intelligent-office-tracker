@@ -26,6 +26,14 @@ object Prefs {
     val DEPARTURE_WINDOW_START = intPreferencesKey("departure_window_start")
     val DEPARTURE_WINDOW_END = intPreferencesKey("departure_window_end")
 
+    // Auto-backup
+    val GH_TOKEN = stringPreferencesKey("gh_token")
+    val GH_OWNER = stringPreferencesKey("gh_owner")
+    val GH_REPO = stringPreferencesKey("gh_repo")
+    val GH_BRANCH = stringPreferencesKey("gh_branch")
+    val BACKUP_ENABLED = booleanPreferencesKey("backup_enabled")
+    val BACKUP_LAST = longPreferencesKey("backup_last")
+
     // Next planned window (self-heal telemetry)
     val NEXT_PLAN_START = longPreferencesKey("next_plan_start")
     val NEXT_PLAN_TYPE = stringPreferencesKey("next_plan_type")
@@ -104,6 +112,41 @@ object Prefs {
             it[NEXT_PLAN_START] = startMillis
             it[NEXT_PLAN_TYPE] = typeWire
         }
+    }
+
+    suspend fun getBackupEnabled(ctx: Context): Boolean =
+        ctx.dataStore.data.map { it[BACKUP_ENABLED] ?: false }.first()
+
+    suspend fun setBackupEnabled(ctx: Context, enabled: Boolean) {
+        ctx.dataStore.edit { it[BACKUP_ENABLED] = enabled }
+    }
+
+    suspend fun getGitHubToken(ctx: Context): String =
+        ctx.dataStore.data.map { it[GH_TOKEN] ?: "" }.first()
+
+    suspend fun setGitHubToken(ctx: Context, token: String) {
+        ctx.dataStore.edit { it[GH_TOKEN] = token }
+    }
+
+    suspend fun getGitHubOwner(ctx: Context): String =
+        ctx.dataStore.data.map { it[GH_OWNER] ?: "" }.first()
+
+    suspend fun setGitHubOwner(ctx: Context, owner: String) {
+        ctx.dataStore.edit { it[GH_OWNER] = owner }
+    }
+
+    suspend fun getGitHubRepo(ctx: Context): String =
+        ctx.dataStore.data.map { it[GH_REPO] ?: "" }.first()
+
+    suspend fun setGitHubRepo(ctx: Context, repo: String) {
+        ctx.dataStore.edit { it[GH_REPO] = repo }
+    }
+
+    suspend fun getGitHubBranch(ctx: Context): String =
+        ctx.dataStore.data.map { it[GH_BRANCH] ?: "master" }.first()
+
+    suspend fun setGitHubBranch(ctx: Context, branch: String) {
+        ctx.dataStore.edit { it[GH_BRANCH] = branch }
     }
 
     suspend fun setOfficeLocation(ctx: Context, lat: Double, lng: Double) {
