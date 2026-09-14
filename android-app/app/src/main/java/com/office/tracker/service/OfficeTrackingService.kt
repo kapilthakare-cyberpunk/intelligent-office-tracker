@@ -174,11 +174,15 @@ class OfficeTrackingService : Service() {
 
     private fun startForegroundWithNotification(text: String) {
         val notification = buildNotification(text)
-        startForeground(
-            NOTIFICATION_ID,
-            notification,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        )
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun updateNotification(text: String) {

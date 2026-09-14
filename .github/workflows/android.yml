@@ -25,4 +25,4 @@ jobs:
       - name: Build + unit tests
         run: gradle assembleDebug testDebugUnitTest --no-daemon
       - name: Lint
-        run: gradle lintDebug --no-daemon
+        run: gradle lintDebug --no-daemon || { echo '--- LINT REPORT ---'; cat app/build/reports/lint-results-debug.txt 2>/dev/null; exit 1; }
