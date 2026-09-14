@@ -13,6 +13,10 @@ private val BBCLOCK = DateTimeFormatter.ofPattern("h:mm a", Locale.ROOT)
 fun formatHHmm(millis: Long): String =
     LocalTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(CLOCK)
 
+/** Pick the best display source: exact millis when available, else the stored string. */
+fun displayTime(stored: String?, millis: Long): String? =
+    if (millis > 0L) format12hMillis(millis) else format12h(stored)
+
 /** 12-hour display like "10:18 am" from epoch millis. */
 fun format12hMillis(millis: Long): String =
     LocalTime.ofInstant(java.time.Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(BBCLOCK).lowercase(Locale.ROOT)
