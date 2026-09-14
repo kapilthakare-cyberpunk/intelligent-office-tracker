@@ -7,59 +7,45 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.office.tracker.OfficeApp
+import com.office.tracker.db.VisitRepository
 import com.office.tracker.ui.MainActivity
+import com.office.tracker.util.format12h
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.LocalDate
 
 /**
- * End-of-day reliability sweep (missed-day catch-up).
- *
- * Fired at several points during the day to detect when the app failed to
- * log an arrival and/or departure, and to surface that to the user with an
- * actionable notification. Converts a silent miss into a caught one.
- *
- * Check types (EXTRA type):
- *   - "arrival"    : fired mid/late arrival window + shortly after; warns if
- *                    today has no arrival logged yet.
- *   - "departure"  : fired after the departure window; warns if today has an
- *                    arrival but no departure (user still "at office").
- *
- * No location is accessed here; it purely inspects the Room DB.
+ * Missed-day catch-up sweep. Inspects the DB only; surfaces missing arrival /
+ * departure with an actionable notification, and re-arms the schedule (self-heal).
  */
 class IntegrityCheckReceiver : BroadcastReceiver() {
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onReceive(context: Context, intent: Intent) {
         val type = intent.getStringExtra(EXTRA_TYPE) ?: return
         Log.d(TAG, "Integrity check fired: type=$type")
 
-        // Re-arm today's checks opportunistically (self-healing) — cheap.
-        WindowScheduler.scheduleIntegrityChecks(context)
+        // Honest self-heal: cancel + reschedule windows/integrity + persist plan.
+        WindowScheduler.ensureLatest(context)
 
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val dao = OfficeApp.instance.database.officeVisitDao()
-
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        val repository = VisitRepository(OfficeApp.instance.database.officeVisitDao())
+        val date = LocalDate.now().toString()
+        scope.launch {
             val todayVisit = try {
-                dao.getVisitForDate(date)
+                repository.visitForDateOnce(date)
             } catch (e: Exception) {
                 Log.e(TAG, "DB read failed", e)
                 null
             }
-
             when (type) {
                 TYPE_ARRIVAL -> {
                     if (todayVisit == null || todayVisit.arrivalTime == null) {
                         notify(
-                            context,
-                            NOTIF_ID_ARRIVAL,
-                            "No arrival detected",
-                            "It's past the arrival window but nothing was logged today. " +
-                                "Did you go to the office?",
+                            context, NOTIF_ID_ARRIVAL, "No arrival detected",
+                            "It's past the arrival window but nothing was logged today. Did you go to the office?",
                             "Mark arrival"
                         )
                     }
@@ -69,11 +55,8 @@ class IntegrityCheckReceiver : BroadcastReceiver() {
                         todayVisit.departureTime == null && !todayVisit.isCurrentlyAtOffice
                     ) {
                         notify(
-                            context,
-                            NOTIF_ID_DEPARTURE,
-                            "Departure not logged",
-                            "You arrived at ${com.office.tracker.util.format12h(todayVisit.arrivalTime) ?: todayVisit.arrivalTime} but no departure " +
-                                "was recorded. Did you leave early?",
+                            context, NOTIF_ID_DEPARTURE, "Departure not logged",
+                            "You arrived at ${format12h(todayVisit.arrivalTime) ?: todayVisit.arrivalTime} but no departure was recorded.",
                             "Log departure"
                         )
                     }
@@ -82,22 +65,15 @@ class IntegrityCheckReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun notify(
-        context: Context,
-        id: Int,
-        title: String,
-        body: String,
-        actionLabel: String
-    ) {
+    private fun notify(context: Context, id: Int, title: String, body: String, actionLabel: String) {
         val contentIntent = PendingIntent.getActivity(
             context, 200 + id,
             Intent(context, MainActivity::class.java).apply {
-                putExtra(MainActivity.EXTRA_OPEN_TAB, 1) // History tab
+                putExtra(MainActivity.EXTRA_OPEN_TAB, 1)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val notification = Notification.Builder(context, OfficeApp.NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
@@ -106,14 +82,10 @@ class IntegrityCheckReceiver : BroadcastReceiver() {
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setPriority(Notification.PRIORITY_HIGH)
-            .addAction(
-                Notification.Action.Builder(null, actionLabel, contentIntent).build()
-            )
+            .addAction(Notification.Action.Builder(null, actionLabel, contentIntent).build())
             .build()
-
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
-                as android.app.NotificationManager
-        manager.notify(id, notification)
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            .notify(id, notification)
     }
 
     companion object {

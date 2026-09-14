@@ -11,253 +11,287 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.util.Calendar
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 
 /**
- * Schedules two daily windows:
- *   - Arrival window: checks location to detect when user reaches office
- *   - Departure window: checks location to detect when user leaves office
+ * Owns the daily window alarms + integrity sweeps.
  *
- * Reliability design (see README):
- *   - Uses AlarmManager for exact timing.
- *   - Weekday-aware: non-work days are skipped so we never pester on off days.
- *   - Redundant: each arrival window also gets a setAlarmClock (highest priority,
- *     exempt from Doze) in addition to the exact alarm, plus the service itself
- *     is START_STICKY, so one backup can replace a lost alarm.
- *   - Integrity checks are scheduled through the day to catch missed days.
- *   - `ensureArmed` re-schedules from app open / boot / integrity sweep so a
- *     killed schedule self-heals.
+ * Reliability rules (post-refactor):
+ *  - Every day gets UNIQUE PendingIntent request codes ([AlarmIds]), so today's
+ *    and tomorrow's alarms can coexist (previously tomorrow's replaced today's).
+ *  - `rearm()` is the single self-heal entry point: cancel -> schedule today &
+ *    tomorrow windows -> schedule integrity checks -> persist the next planned
+ *    window. Called on app open, boot, every integrity sweep and departure end.
+ *  - Past alarms are never re-armed (they would fire instantly); the inline
+ *    "inside a window right now" check starts the service directly instead.
+ *  - A coroutine [rearmMutex] prevents two concurrent re-arms (app open + boot)
+ *    from racing cancel/schedule and losing alarms.
  */
 object WindowScheduler {
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
     const val ACTION_WINDOW_START = "com.office.tracker.WINDOW_START"
     const val ACTION_WINDOW_END = "com.office.tracker.WINDOW_END"
-    const val EXTRA_WINDOW_TYPE = "window_type"
-    const val WINDOW_ARRIVAL = "arrival"
-    const val WINDOW_DEPARTURE = "departure"
-
-    // Integrity check actions
     const val ACTION_INTEGRITY_ARRIVAL = "com.office.tracker.ARRIVAL_CHECK"
     const val ACTION_INTEGRITY_DEPARTURE = "com.office.tracker.DEPARTURE_CHECK"
 
-    private const val REQ_ARRIVAL_START = 0
-    private const val REQ_ARRIVAL_END = 1
-    private const val REQ_DEPARTURE_START = 2
-    private const val REQ_DEPARTURE_END = 3
-    private const val REQ_ARRIVAL_CHECK = 10
-    private const val REQ_DEPARTURE_CHECK = 11
+    const val REQ_INTEGRITY_ARRIVAL = 10
+    const val REQ_INTEGRITY_DEPARTURE = 11
 
-    fun scheduleToday(context: Context) {
-        // Cancel then schedule inside a coroutine (work-day read is suspend).
-        val now = Calendar.getInstance()
-        cancelAll(context)
-        scope.launch {
-            val aStart = Prefs.getArrivalWindowStart(context)
-            val aEnd = Prefs.getArrivalWindowEnd(context)
-            val dStart = Prefs.getDepartureWindowStart(context)
-            val dEnd = Prefs.getDepartureWindowEnd(context)
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val rearmMutex = Mutex()
 
-            scheduleWindowSet(context, now, offsetDays = 0,
-                arrivalStartH = aStart, arrivalEndH = aEnd,
-                departureStartH = dStart, departureEndH = dEnd)
+    val EXTRA_WINDOW_TYPE: String get() = WindowType.EXTRA_WINDOW_TYPE
 
-            // If we are already INSIDE an active window right now, kick off the
-            // tracking service immediately. This is the reliable path on
-            // Android 12+ where a background alarm can't start a foreground
-            // service — e.g. the user opens the app after 9am, so the 9am
-            // setAlarmClock exemption is in the past and would otherwise never
-            // fire, leaving today un-tracked (no auto punch-in/out).
-            if (Prefs.isWorkDay(context, now.get(Calendar.DAY_OF_WEEK))) {
-                val hour = now.get(Calendar.HOUR_OF_DAY)
-                val windowType =
-                    if (hour >= aStart && hour < aEnd) WINDOW_ARRIVAL
-                    else if (hour >= dStart && hour < dEnd) WINDOW_DEPARTURE
-                    else null
-                if (windowType != null) {
-                    Log.d(TAG, "scheduleToday: inside $windowType window; starting service now")
-                    startTrackingService(context, windowType)
-                }
-            }
-        }
-        scheduleIntegrityChecks(context)
-    }
+    fun windowTypeOf(intent: Intent): WindowType? =
+        WindowType.fromWire(intent.getStringExtra(WindowType.EXTRA_WINDOW_TYPE))
 
-    fun scheduleTomorrow(context: Context) {
-        val tomorrow = Calendar.getInstance().apply {
-            add(Calendar.DAY_OF_YEAR, 1)
-        }
-        scope.launch {
-            val aStart = Prefs.getArrivalWindowStart(context)
-            val aEnd = Prefs.getArrivalWindowEnd(context)
-            val dStart = Prefs.getDepartureWindowStart(context)
-            val dEnd = Prefs.getDepartureWindowEnd(context)
-            scheduleWindowSet(context, tomorrow, offsetDays = 1,
-                arrivalStartH = aStart, arrivalEndH = aEnd,
-                departureStartH = dStart, departureEndH = dEnd)
-        }
+    /** Non-suspending entry point used by app open, boot and receiveers. */
+    fun ensureLatest(context: Context) {
+        scope.launch { rearm(context) }
     }
 
     /**
-     * Starts the foreground tracking service for the given window.
-     * Safe to call from any context (app open, boot, receiver).
+     * Full re-arm. Safe to call any number of times; never arms past alarms.
      */
-    fun startTrackingService(context: Context, windowType: String) {
-        val serviceIntent = Intent(context, OfficeTrackingService::class.java).apply {
+    suspend fun rearm(context: Context, allowInlineStart: Boolean = true) {
+        rearmMutex.withLock {
+            val appCtx = context.applicationContext
+            val today = LocalDate.now()
+            val tomorrow = today.plusDays(1)
+
+            cancelAll(appCtx)
+
+            val aStart = Prefs.getArrivalWindowStart(appCtx)
+            val aEnd = Prefs.getArrivalWindowEnd(appCtx)
+            val dStart = Prefs.getDepartureWindowStart(appCtx)
+            val dEnd = Prefs.getDepartureWindowEnd(appCtx)
+
+            if (Prefs.isWorkDay(appCtx, today.dayOfWeek)) {
+                scheduleDay(appCtx, today, aStart, aEnd, dStart, dEnd)
+            } else {
+                Log.d(TAG, "Today is not a work day; no window alarms")
+            }
+            if (Prefs.isWorkDay(appCtx, tomorrow.dayOfWeek)) {
+                scheduleDay(appCtx, tomorrow, aStart, aEnd, dStart, dEnd)
+            }
+
+            scheduleIntegrityChecks(appCtx, aEnd, dEnd)
+
+            if (allowInlineStart && Prefs.isWorkDay(appCtx, today.dayOfWeek)) {
+                val now = LocalTime.now()
+                if (now.isAfter(LocalTime.of(aStart, 0)) && now.isBefore(LocalTime.of(aEnd, 0))) {
+                    Log.d(TAG, "Inside arrival window; starting service now")
+                    startTrackingService(appCtx, WindowType.ARRIVAL)
+                } else if (now.isAfter(LocalTime.of(dStart, 0)) && now.isBefore(LocalTime.of(dEnd, 0))) {
+                    Log.d(TAG, "Inside departure window; starting service now")
+                    startTrackingService(appCtx, WindowType.DEPARTURE)
+                }
+            }
+
+            persistPlan(appCtx, today, tomorrow, aStart, aEnd, dStart, dEnd)
+        }
+    }
+
+    fun startTrackingService(context: Context, windowType: WindowType) {
+        val intent = Intent(context, OfficeTrackingService::class.java).apply {
             action = ACTION_WINDOW_START
-            putExtra(EXTRA_WINDOW_TYPE, windowType)
+            putExtra(WindowType.EXTRA_WINDOW_TYPE, windowType.wire)
         }
         try {
-            ContextCompat.startForegroundService(context, serviceIntent)
+            ContextCompat.startForegroundService(context, intent)
         } catch (e: Exception) {
             Log.w(TAG, "Could not start foreground service: ${e.message}")
         }
     }
 
-    /**
-     * Schedules the arrival/departure window boundaries for a given base day,
-     * skipping entirely if that day is not a work day. Fire-and-forget: launches
-     * a background coroutine because the work-day setting is a suspend DataStore read.
-     */
-    private fun scheduleWindowSet(
+    private fun scheduleDay(
         context: Context,
-        base: Calendar,
-        offsetDays: Int,
-        arrivalStartH: Int, arrivalEndH: Int,
-        departureStartH: Int, departureEndH: Int
+        date: LocalDate,
+        aStart: Int, aEnd: Int,
+        dStart: Int, dEnd: Int
     ) {
-        scope.launch {
-            if (!Prefs.isWorkDay(context, base.get(Calendar.DAY_OF_WEEK))) {
-                Log.d(TAG, "Skipping windows for non-work day (dow=${base.get(Calendar.DAY_OF_WEEK)})")
-                return@launch
-            }
+        val epochDay = date.toEpochDay()
+        val now = System.currentTimeMillis()
 
-            val arrivalStart = atHour(base, arrivalStartH)
-            val arrivalEnd = atHour(base, arrivalEndH)
-            val departureStart = atHour(base, departureStartH)
-            val departureEnd = atHour(base, departureEndH)
+        scheduleIfFuture(
+            context, dateTime(date, aStart), ACTION_WINDOW_START, WindowType.ARRIVAL,
+            AlarmIds.requestCode(epochDay, AlarmIds.SLOT_ARRIVAL_START), now
+        )
+        scheduleIfFuture(
+            context, dateTime(date, aEnd), ACTION_WINDOW_END, WindowType.ARRIVAL,
+            AlarmIds.requestCode(epochDay, AlarmIds.SLOT_ARRIVAL_END), now
+        )
+        scheduleIfFuture(
+            context, dateTime(date, dStart), ACTION_WINDOW_START, WindowType.DEPARTURE,
+            AlarmIds.requestCode(epochDay, AlarmIds.SLOT_DEPARTURE_START), now
+        )
+        scheduleIfFuture(
+            context, dateTime(date, dEnd), ACTION_WINDOW_END, WindowType.DEPARTURE,
+            AlarmIds.requestCode(epochDay, AlarmIds.SLOT_DEPARTURE_END), now
+        )
 
-            // Arrival start: exact alarm + setAlarmClock (redundant backup / Doze-proof)
-            scheduleAlarm(context, arrivalStart, ACTION_WINDOW_START, WINDOW_ARRIVAL, REQ_ARRIVAL_START)
-            scheduleAlarmClock(context, arrivalStart, "Office Tracker: arrival window")
-
-            scheduleAlarm(context, arrivalEnd, ACTION_WINDOW_END, WINDOW_ARRIVAL, REQ_ARRIVAL_END)
-            scheduleAlarm(context, departureStart, ACTION_WINDOW_START, WINDOW_DEPARTURE, REQ_DEPARTURE_START)
-            scheduleAlarm(context, departureEnd, ACTION_WINDOW_END, WINDOW_DEPARTURE, REQ_DEPARTURE_END)
-
-            Log.d(TAG, "Windows scheduled for offsetDay=$offsetDays "
-                + "arr=${arrivalStart.get(Calendar.HOUR_OF_DAY)}:00-${arrivalEnd.get(Calendar.HOUR_OF_DAY)}:00 "
-                + "dep=${departureStart.get(Calendar.HOUR_OF_DAY)}:00-${departureEnd.get(Calendar.HOUR_OF_DAY)}:00")
-        }
-    }
-
-    private fun atHour(base: Calendar, hour: Int): Calendar =
-        (base.clone() as Calendar).apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+        // Redundant alarm-clock (Doze-exempt) for the arrival start only.
+        val arrivalStart = dateTime(date, aStart).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        if (arrivalStart > now) {
+            scheduleAlarmClock(
+                context, arrivalStart,
+                AlarmIds.requestCode(epochDay, AlarmIds.SLOT_CLOCK_SHOW),
+                AlarmIds.requestCode(epochDay, AlarmIds.SLOT_CLOCK_EDIT)
+            )
         }
 
-    /**
-     * Schedules the missed-day integrity checks for today.
-     *   - arrival check: shortly after the arrival window end (13:00 default)
-     *   - departure check: shortly after the departure window end (22:00 default)
-     * These are re-armed opportunistically every time the service starts and on
-     * app open, so even if one is lost the next day's are re-planned.
-     */
-    fun scheduleIntegrityChecks(context: Context) {
-        val now = Calendar.getInstance()
-        val arrivalCheck = atHour(now, 13)
-        val departureCheck = atHour(now, 22)
-
-        scheduleAlarm(context, arrivalCheck, ACTION_INTEGRITY_ARRIVAL, IntegrityCheckReceiver.TYPE_ARRIVAL, REQ_ARRIVAL_CHECK)
-        scheduleAlarm(context, departureCheck, ACTION_INTEGRITY_DEPARTURE, IntegrityCheckReceiver.TYPE_DEPARTURE, REQ_DEPARTURE_CHECK)
+        Log.d(TAG, "Windows scheduled for $date: arr ${aStart}:00-${aEnd}:00, dep ${dStart}:00-${dEnd}:00")
     }
 
-    private fun scheduleAlarm(
+    private fun dateTime(date: LocalDate, hour: Int): LocalDateTime = date.atTime(hour, 0)
+
+    private fun scheduleIfFuture(
         context: Context,
-        triggerAt: Calendar,
+        triggerAt: LocalDateTime,
         action: String,
-        windowType: String,
-        requestCode: Int
+        type: WindowType,
+        requestCode: Int,
+        nowMillis: Long
     ) {
+        val at = triggerAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        if (at <= nowMillis) return
         val intent = Intent(context, WindowAlarmReceiver::class.java).apply {
             this.action = action
-            putExtra(EXTRA_WINDOW_TYPE, windowType)
+            putExtra(WindowType.EXTRA_WINDOW_TYPE, type.wire)
         }
-        val pendingIntent = PendingIntent.getBroadcast(
+        val pi = PendingIntent.getBroadcast(
             context, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        val alarmManager = context.getSystemService(AlarmManager::class.java)
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerAt.timeInMillis,
-            pendingIntent
-        )
+        val manager = context.getSystemService(AlarmManager::class.java)
+        manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
     }
 
-    private fun scheduleAlarmClock(context: Context, triggerAt: Calendar, label: String) {
+    private fun scheduleAlarmClock(context: Context, triggerAtMillis: Long, showCode: Int, editCode: Int) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
-        // Only meaningful for the arrival window start; skip if in the past.
-        if (triggerAt.timeInMillis <= System.currentTimeMillis()) return
-
         val showIntent = Intent(context, WindowAlarmReceiver::class.java).apply {
             action = ACTION_WINDOW_START
-            putExtra(EXTRA_WINDOW_TYPE, WINDOW_ARRIVAL)
+            putExtra(WindowType.EXTRA_WINDOW_TYPE, WindowType.ARRIVAL.wire)
         }
-        val pendingShowIntent = PendingIntent.getBroadcast(
-            context, 99, showIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
         val editIntent = Intent(context, WindowAlarmReceiver::class.java).apply {
             action = ACTION_WINDOW_START
-            putExtra(EXTRA_WINDOW_TYPE, WINDOW_ARRIVAL)
+            putExtra(WindowType.EXTRA_WINDOW_TYPE, WindowType.ARRIVAL.wire)
         }
-        val pendingEditIntent = PendingIntent.getBroadcast(
-            context, 98, editIntent,
+        val showPi = PendingIntent.getBroadcast(
+            context, showCode, showIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val editPi = PendingIntent.getBroadcast(
+            context, editCode, editIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.setAlarmClock(
-            AlarmManager.AlarmClockInfo(triggerAt.timeInMillis, pendingShowIntent),
-            pendingEditIntent
+            AlarmManager.AlarmClockInfo(triggerAtMillis, showPi),
+            editPi
         )
     }
 
     /**
-     * Self-heal: if the earliest scheduled window is already in the past (i.e.
-     * the schedule died), re-arm it. Called on app open, boot, and integrity checks.
+     * Integrity sweeps shortly after each window ends, derived from the
+     * configured window hours instead of hardcoded 13:00/22:00.
+     * Past times are skipped (the next rearm covers the next day).
      */
-    fun ensureArmed(context: Context) {
+    private suspend fun scheduleIntegrityChecks(context: Context, aEnd: Int, dEnd: Int) {
+        val today = LocalDate.now()
         val now = System.currentTimeMillis()
+        val aCheck = dateTime(today, Integer.min(aEnd + 1, 23))
+        val dCheck = dateTime(today, Integer.min(dEnd + 1, 23))
+        scheduleIfFuture(
+            context, aCheck, ACTION_INTEGRITY_ARRIVAL, WindowType.ARRIVAL,
+            AlarmIds.requestCode(today.toEpochDay(), 5), now
+        )
+        scheduleIfFuture(
+            context, dCheck, ACTION_INTEGRITY_DEPARTURE, WindowType.DEPARTURE,
+            AlarmIds.requestCode(today.toEpochDay(), 6), now
+        )
+    }
 
-        val alarmManager = context.getSystemService(AlarmManager::class.java)
-        val nextClock = alarmManager.nextAlarmClock?.triggerTime ?: 0L
-        if (nextClock == 0L || nextClock < now) {
-            Log.d(TAG, "ensureArmed: schedule appears missing; re-scheduling")
-            scheduleToday(context)
-            scheduleTomorrow(context)
+    private suspend fun persistPlan(
+        context: Context,
+        today: LocalDate,
+        tomorrow: LocalDate,
+        aStart: Int, aEnd: Int,
+        dStart: Int, dEnd: Int
+    ) {
+        val now = LocalDateTime.now()
+        val candidates = mutableListOf<Pair<LocalDateTime, WindowType>>()
+        fun addDay(date: LocalDate, isWork: Boolean) {
+            if (!isWork) return
+            candidates += dateTime(date, aStart) to WindowType.ARRIVAL
+            candidates += dateTime(date, aEnd) to WindowType.ARRIVAL
+            candidates += dateTime(date, dStart) to WindowType.DEPARTURE
+            candidates += dateTime(date, dEnd) to WindowType.DEPARTURE
+        }
+        addDay(today, Prefs.isWorkDay(context, today.dayOfWeek))
+        addDay(tomorrow, Prefs.isWorkDay(context, tomorrow.dayOfWeek))
+        val next = candidates.filter { it.first.isAfter(now) }.minByOrNull { it.first }
+        if (next != null) {
+            val millis = next.first.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            Prefs.setNextPlan(context, millis, next.second.wire)
         }
     }
 
     fun cancelAll(context: Context) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
-        val items = listOf(
-            0 to ACTION_WINDOW_START, 1 to ACTION_WINDOW_END,
-            2 to ACTION_WINDOW_START, 3 to ACTION_WINDOW_END,
-            REQ_ARRIVAL_CHECK to ACTION_INTEGRITY_ARRIVAL,
-            REQ_DEPARTURE_CHECK to ACTION_INTEGRITY_DEPARTURE
+        val today = LocalDate.now().toEpochDay()
+        for (day in today - 1..today + 1) {
+            for (slot in intArrayOf(
+                AlarmIds.SLOT_ARRIVAL_START, AlarmIds.SLOT_ARRIVAL_END,
+                AlarmIds.SLOT_DEPARTURE_START, AlarmIds.SLOT_DEPARTURE_END, 5, 6,
+                AlarmIds.SLOT_CLOCK_SHOW, AlarmIds.SLOT_CLOCK_EDIT
+            )) {
+                val code = AlarmIds.requestCode(day, slot)
+                val (action, type) = when (slot) {
+                    AlarmIds.SLOT_ARRIVAL_START -> ACTION_WINDOW_START to WindowType.ARRIVAL
+                    AlarmIds.SLOT_ARRIVAL_END -> ACTION_WINDOW_END to WindowType.ARRIVAL
+                    AlarmIds.SLOT_DEPARTURE_START -> ACTION_WINDOW_START to WindowType.DEPARTURE
+                    AlarmIds.SLOT_DEPARTURE_END -> ACTION_WINDOW_END to WindowType.DEPARTURE
+                    5 -> ACTION_INTEGRITY_ARRIVAL to WindowType.ARRIVAL
+                    6 -> ACTION_INTEGRITY_DEPARTURE to WindowType.DEPARTURE
+                    else -> ACTION_WINDOW_START to WindowType.ARRIVAL
+                }
+                val intent = Intent(context, WindowAlarmReceiver::class.java).apply {
+                    this.action = action
+                    putExtra(WindowType.EXTRA_WINDOW_TYPE, type.wire)
+                }
+                val pi = PendingIntent.getBroadcast(
+                    context, code, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                alarmManager.cancel(pi)
+            }
+        }
+        // Legacy fixed codes from pre-refactor builds:
+        val legacy = listOf(
+            AlarmIds.LEGACY_ARRIVAL_START to (ACTION_WINDOW_START to WindowType.ARRIVAL),
+            AlarmIds.LEGACY_ARRIVAL_END to (ACTION_WINDOW_END to WindowType.ARRIVAL),
+            AlarmIds.LEGACY_DEPARTURE_START to (ACTION_WINDOW_START to WindowType.DEPARTURE),
+            AlarmIds.LEGACY_DEPARTURE_END to (ACTION_WINDOW_END to WindowType.DEPARTURE),
+            AlarmIds.LEGACY_ARRIVAL_CHECK to (ACTION_INTEGRITY_ARRIVAL to WindowType.ARRIVAL),
+            AlarmIds.LEGACY_DEPARTURE_CHECK to (ACTION_INTEGRITY_DEPARTURE to WindowType.DEPARTURE),
+            AlarmIds.LEGACY_CLOCK_SHOW to (ACTION_WINDOW_START to WindowType.ARRIVAL),
+            AlarmIds.LEGACY_CLOCK_EDIT to (ACTION_WINDOW_START to WindowType.ARRIVAL)
         )
-        for ((req, action) in items) {
-            val intent = Intent(context, WindowAlarmReceiver::class.java).apply { this.action = action }
-            val pendingIntent = PendingIntent.getBroadcast(
-                context, req, intent,
+        for ((code, spec) in legacy) {
+            val intent = Intent(context, WindowAlarmReceiver::class.java).apply {
+                action = spec.first
+                putExtra(WindowType.EXTRA_WINDOW_TYPE, spec.second.wire)
+            }
+            val pi = PendingIntent.getBroadcast(
+                context, code, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            alarmManager.cancel(pendingIntent)
+            alarmManager.cancel(pi)
         }
     }
 

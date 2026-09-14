@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.office.tracker.service.OfficeTrackingService
+import com.office.tracker.service.WindowType
 import com.office.tracker.service.WindowScheduler
 
 class MainActivity : ComponentActivity() {
@@ -44,10 +45,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Schedule windows on launch
-        WindowScheduler.scheduleToday(this)
-        WindowScheduler.scheduleTomorrow(this)
-        WindowScheduler.scheduleIntegrityChecks(this)
+        // Schedule windows on launch (self-heal re-arm; per-day alarms).
+        WindowScheduler.ensureLatest(this)
     }
 
     private fun requestPermissionsAndStart() {
@@ -83,7 +82,7 @@ class MainActivity : ComponentActivity() {
 
         val intent = Intent(this, OfficeTrackingService::class.java).apply {
             action = WindowScheduler.ACTION_WINDOW_START
-            putExtra(WindowScheduler.EXTRA_WINDOW_TYPE, "arrival")
+            putExtra(WindowType.EXTRA_WINDOW_TYPE, WindowType.ARRIVAL.wire)
         }
         startForegroundService(intent)
     }

@@ -5,8 +5,10 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import java.util.Calendar
+import java.time.DayOfWeek
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -24,29 +26,48 @@ object Prefs {
     val DEPARTURE_WINDOW_START = intPreferencesKey("departure_window_start")
     val DEPARTURE_WINDOW_END = intPreferencesKey("departure_window_end")
 
-    // Check interval in seconds
-    val CHECK_INTERVAL = intPreferencesKey("check_interval")
+    // Next planned window (self-heal telemetry)
+    val NEXT_PLAN_START = longPreferencesKey("next_plan_start")
+    val NEXT_PLAN_TYPE = stringPreferencesKey("next_plan_type")
 
-    // Work days: a boolean per day-of-week (Calendar.DAY_OF_WEEK -> true = work day).
-    // Default: Mon-Sat work, Sunday off (matches the user's known office schedule).
+    // Work days: a boolean per day-of-week. Default: Mon-Sat work, Sunday off.
     private val WORK_DAY_KEYS = mapOf(
-        Calendar.SUNDAY to booleanPreferencesKey("work_sun"),
-        Calendar.MONDAY to booleanPreferencesKey("work_mon"),
-        Calendar.TUESDAY to booleanPreferencesKey("work_tue"),
-        Calendar.WEDNESDAY to booleanPreferencesKey("work_wed"),
-        Calendar.THURSDAY to booleanPreferencesKey("work_thu"),
-        Calendar.FRIDAY to booleanPreferencesKey("work_fri"),
-        Calendar.SATURDAY to booleanPreferencesKey("work_sat")
+        DayOfWeek.SUNDAY to booleanPreferencesKey("work_sun"),
+        DayOfWeek.MONDAY to booleanPreferencesKey("work_mon"),
+        DayOfWeek.TUESDAY to booleanPreferencesKey("work_tue"),
+        DayOfWeek.WEDNESDAY to booleanPreferencesKey("work_wed"),
+        DayOfWeek.THURSDAY to booleanPreferencesKey("work_thu"),
+        DayOfWeek.FRIDAY to booleanPreferencesKey("work_fri"),
+        DayOfWeek.SATURDAY to booleanPreferencesKey("work_sat")
     )
 
-    private fun defaultWorkDay(dayOfWeek: Int): Boolean = dayOfWeek != Calendar.SUNDAY
+    private fun defaultWorkDay(dayOfWeek: DayOfWeek): Boolean = dayOfWeek != DayOfWeek.SUNDAY
 
-    suspend fun isWorkDay(ctx: Context, dayOfWeek: Int): Boolean {
+    /** Calendar.DAY_OF_WEEK (1=Sunday .. 7=Saturday) convenience overload. */
+    suspend fun isWorkDay(ctx: Context, calendarDayOfWeek: Int): Boolean =
+        isWorkDay(ctx, calendarDayOfWeek.toDayOfWeek())
+
+    suspend fun setWorkDay(ctx: Context, calendarDayOfWeek: Int, work: Boolean) {
+        setWorkDay(ctx, calendarDayOfWeek.toDayOfWeek(), work)
+    }
+
+    private fun Int.toDayOfWeek(): DayOfWeek = when (this) {
+        1 -> DayOfWeek.SUNDAY
+        2 -> DayOfWeek.MONDAY
+        3 -> DayOfWeek.TUESDAY
+        4 -> DayOfWeek.WEDNESDAY
+        5 -> DayOfWeek.THURSDAY
+        6 -> DayOfWeek.FRIDAY
+        7 -> DayOfWeek.SATURDAY
+        else -> DayOfWeek.SUNDAY
+    }
+
+    suspend fun isWorkDay(ctx: Context, dayOfWeek: DayOfWeek): Boolean {
         val key = WORK_DAY_KEYS[dayOfWeek] ?: return false
         return ctx.dataStore.data.map { it[key] ?: defaultWorkDay(dayOfWeek) }.first()
     }
 
-    suspend fun setWorkDay(ctx: Context, dayOfWeek: Int, work: Boolean) {
+    suspend fun setWorkDay(ctx: Context, dayOfWeek: DayOfWeek, work: Boolean) {
         val key = WORK_DAY_KEYS[dayOfWeek] ?: return
         ctx.dataStore.edit { it[key] = work }
     }
@@ -72,8 +93,18 @@ object Prefs {
     suspend fun getDepartureWindowEnd(ctx: Context): Int =
         ctx.dataStore.data.map { it[DEPARTURE_WINDOW_END] ?: 21 }.first()
 
-    suspend fun getCheckInterval(ctx: Context): Int =
-        ctx.dataStore.data.map { it[CHECK_INTERVAL] ?: 30 }.first()
+    suspend fun getNextPlanStart(ctx: Context): Long =
+        ctx.dataStore.data.map { it[NEXT_PLAN_START] ?: 0L }.first()
+
+    suspend fun getNextPlanType(ctx: Context): String =
+        ctx.dataStore.data.map { it[NEXT_PLAN_TYPE] ?: "" }.first()
+
+    suspend fun setNextPlan(ctx: Context, startMillis: Long, typeWire: String) {
+        ctx.dataStore.edit {
+            it[NEXT_PLAN_START] = startMillis
+            it[NEXT_PLAN_TYPE] = typeWire
+        }
+    }
 
     suspend fun setOfficeLocation(ctx: Context, lat: Double, lng: Double) {
         ctx.dataStore.edit {

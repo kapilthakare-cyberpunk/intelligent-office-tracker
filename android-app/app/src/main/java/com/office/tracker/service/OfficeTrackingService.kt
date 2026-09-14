@@ -9,75 +9,71 @@ import android.location.Location
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import com.google.android.gms.location.*
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.office.tracker.OfficeApp
-import com.office.tracker.db.OfficeVisit
-import com.office.tracker.ui.MainActivity
+import com.office.tracker.db.VisitRepository
 import com.office.tracker.util.Prefs
-import kotlinx.coroutines.*
-import java.text.SimpleDateFormat
-import java.util.*
+import com.office.tracker.util.formatHHmm
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.time.LocalDate
 
+/**
+ * Foreground location service that runs only inside the arrival/departure
+ * windows. Window transition logic lives in [WindowStateMachine] (pure, tested);
+ * this class only feeds it locations and applies the emitted events to the DB.
+ */
 class OfficeTrackingService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private lateinit var repository: VisitRepository
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private var locationCallback: LocationCallback? = null
 
-    private var activeWindow: String? = null // "arrival" or "departure"
-    private var hasLoggedArrival = false
-    private var hasLoggedDeparture = false
-    private var outsideCount = 0
-    private val DEPARTURE_DEBOUNCE_COUNT = 3
-
-    private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
-    private val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    private var activeWindow: WindowType? = null
+    private var windowState = WindowState()
+    private val stateMachine = WindowStateMachine()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        Log.d(TAG, "Service created")
+        repository = VisitRepository(OfficeApp.instance.database.officeVisitDao())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        val windowType = intent?.getStringExtra(WindowScheduler.EXTRA_WINDOW_TYPE)
+        val windowType = WindowType.fromWire(intent?.getStringExtra(WindowType.EXTRA_WINDOW_TYPE))
+        Log.d(TAG, "onStartCommand: action=$action window=${windowType?.wire}")
 
-        Log.d(TAG, "onStartCommand: action=$action, window=$windowType")
-
-        // Always start as foreground immediately
         startForegroundWithNotification("Office Tracker active")
 
         when (action) {
-            WindowScheduler.ACTION_WINDOW_START -> {
-                startWindow(windowType ?: return START_STICKY)
-            }
-            WindowScheduler.ACTION_WINDOW_END -> {
-                endWindow(windowType ?: return START_STICKY)
-            }
+            WindowScheduler.ACTION_WINDOW_START -> windowType?.let { startWindow(it) }
+            WindowScheduler.ACTION_WINDOW_END -> windowType?.let { endWindow(it) }
             ACTION_STOP -> {
                 stopLocationUpdates()
                 stopSelf()
                 return START_NOT_STICKY
             }
         }
-
-        return START_STICKY // Restart if killed
+        return START_STICKY
     }
 
-    private fun startWindow(windowType: String) {
+    private fun startWindow(windowType: WindowType) {
         activeWindow = windowType
-        hasLoggedArrival = false
-        hasLoggedDeparture = false
-        outsideCount = 0
+        windowState = WindowState()
+        Log.d(TAG, "Starting ${windowType.wire} window")
+        updateNotification("Tracking: ${windowType.wire} window active")
 
-        Log.d(TAG, "Starting $windowType window")
-
-        updateNotification("Tracking: $windowType window active")
-
-        // Start location updates
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 30_000L)
             .setMinUpdateIntervalMillis(15_000L)
             .setWaitForAccurateLocation(false)
@@ -85,7 +81,9 @@ class OfficeTrackingService : Service() {
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                result.lastLocation?.let { checkProximity(it) }
+                result.lastLocation?.let { loc ->
+                    scope.launch { handleFix(loc) }
+                }
             }
         }
 
@@ -101,108 +99,68 @@ class OfficeTrackingService : Service() {
         }
     }
 
-    private fun endWindow(windowType: String) {
-        Log.d(TAG, "Ending $windowType window")
+    private fun endWindow(windowType: WindowType) {
+        Log.d(TAG, "Ending ${windowType.wire} window")
 
-        // If we were at office and haven't logged departure yet, do it now
-        if (windowType == "departure" && activeWindow == "departure") {
-            // The last known location check already handled departure logging
-            // But if user was still at office when window ended, log departure at window end time
-            if (!hasLoggedDeparture) {
-                scope.launch {
-                    val today = dateFmt.format(Date())
-                    val visit = OfficeApp.instance.database.officeVisitDao().getVisitForDate(today)
-                    if (visit != null && visit.isCurrentlyAtOffice) {
-                        val now = timeFmt.format(Date())
-                        OfficeApp.instance.database.officeVisitDao()
-                            .setDeparture(today, now, System.currentTimeMillis())
-                        Log.d(TAG, "Logged departure at window end: $now")
-                    }
+        if (windowType == WindowType.DEPARTURE && activeWindow == WindowType.DEPARTURE &&
+            !windowState.hasLoggedDeparture
+        ) {
+            val today = LocalDate.now().toString()
+            scope.launch {
+                val visit = repository.visitForDateOnce(today)
+                if (visit != null && visit.isCurrentlyAtOffice) {
+                    val now = System.currentTimeMillis()
+                    repository.recordDeparture(today, formatHHmm(now), now)
+                    Log.d(TAG, "Logged departure at window end")
                 }
             }
         }
 
         stopLocationUpdates()
         activeWindow = null
-
-        // Schedule tomorrow's windows if this was the last window of the day
-        if (windowType == "departure") {
-            WindowScheduler.scheduleTomorrow(this)
-        }
-
         updateNotification("Office Tracker standby")
+
+        // Schedule tomorrow + integrity + persist plan (self-heal after the last window).
+        if (windowType == WindowType.DEPARTURE) {
+            scope.launch { WindowScheduler.rearm(this@OfficeTrackingService, allowInlineStart = false) }
+        }
     }
 
-    private fun checkProximity(location: Location) {
-        scope.launch {
-            val officeLat = Prefs.getOfficeLat(this@OfficeTrackingService)
-            val officeLng = Prefs.getOfficeLng(this@OfficeTrackingService)
-            val radius = Prefs.getOfficeRadius(this@OfficeTrackingService)
+    private suspend fun handleFix(location: Location) {
+        val today = LocalDate.now().toString()
+        val officeLat = Prefs.getOfficeLat(this)
+        val officeLng = Prefs.getOfficeLng(this)
+        val radius = Prefs.getOfficeRadius(this)
 
-            val officeLocation = Location("office").apply {
-                latitude = officeLat
-                longitude = officeLng
+        val dist = FloatArray(1)
+        Location.distanceBetween(
+            officeLat, officeLng, location.latitude, location.longitude, dist
+        )
+        val isAtOffice = dist[0] <= radius
+        val window = activeWindow ?: return
+
+        val visit = repository.visitForDateOnce(today)
+        val now = System.currentTimeMillis()
+        val (newState, event) = stateMachine.onLocation(window, isAtOffice, visit, windowState, now)
+        windowState = newState
+
+        when (event) {
+            is WindowEvent.LogArrival -> {
+                repository.recordArrival(today, formatHHmm(now), now)
+                Log.d(TAG, "ARRIVAL logged (${dist[0].toInt()}m from office)")
+                updateNotification("At office since ${formatHHmm(now)}")
             }
-
-            val distance = location.distanceTo(officeLocation)
-            val isAtOffice = distance <= radius
-
-            val today = dateFmt.format(Date())
-            val now = timeFmt.format(Date())
-            val nowMillis = System.currentTimeMillis()
-            val dao = OfficeApp.instance.database.officeVisitDao()
-
-            when (activeWindow) {
-                "arrival" -> {
-                    if (isAtOffice && !hasLoggedArrival) {
-                        hasLoggedArrival = true
-                        val existing = dao.getVisitForDate(today)
-                        if (existing == null) {
-                            dao.upsert(
-                                OfficeVisit(
-                                    date = today,
-                                    arrivalTime = now,
-                                    arrivalTimestamp = nowMillis,
-                                    isCurrentlyAtOffice = true
-                                )
-                            )
-                        } else if (existing.arrivalTime == null) {
-                            dao.setArrival(today, now, nowMillis)
-                        }
-                        Log.d(TAG, "ARRIVAL logged at $now (${distance.toInt()}m from office)")
-                        updateNotification("At office since $now")
-                    } else if (!isAtOffice && hasLoggedArrival) {
-                        // Left office during arrival window - mark departure
-                        hasLoggedArrival = false
-                        dao.setDeparture(today, now, nowMillis)
-                        Log.d(TAG, "DEPARTURE logged during arrival window at $now")
-                    }
-                }
-                "departure" -> {
-                    if (!isAtOffice && !hasLoggedDeparture) {
-                        outsideCount++
-                        Log.d(TAG, "Outside reading $outsideCount/$DEPARTURE_DEBOUNCE_COUNT (${distance.toInt()}m)")
-                        if (outsideCount >= DEPARTURE_DEBOUNCE_COUNT) {
-                            val existing = dao.getVisitForDate(today)
-                            if (existing != null && existing.isCurrentlyAtOffice) {
-                                hasLoggedDeparture = true
-                                dao.setDeparture(today, now, nowMillis)
-                                Log.d(TAG, "DEPARTURE logged at $now (${distance.toInt()}m from office)")
-                                updateNotification("Left office at $now")
-                            }
-                        }
-                    } else if (isAtOffice && hasLoggedDeparture) {
-                        hasLoggedDeparture = false
-                        hasLoggedArrival = true
-                        outsideCount = 0
-                        dao.setArrival(today, now, nowMillis)
-                        Log.d(TAG, "RE-ARRIVAL logged at $now")
-                        updateNotification("Back at office since $now")
-                    } else if (isAtOffice && !hasLoggedDeparture) {
-                        outsideCount = 0
-                    }
-                }
+            is WindowEvent.LogDeparture -> {
+                repository.recordDeparture(today, formatHHmm(now), now)
+                Log.d(TAG, "DEPARTURE logged")
+                updateNotification("Left office at ${formatHHmm(now)}")
             }
+            is WindowEvent.ReArrival -> {
+                repository.recordReArrival(today, formatHHmm(now), now)
+                Log.d(TAG, "RE-ARRIVAL logged")
+                updateNotification("Back at office since ${formatHHmm(now)}")
+            }
+            WindowEvent.Noop -> Unit
         }
     }
 
@@ -231,26 +189,20 @@ class OfficeTrackingService : Service() {
     private fun buildNotification(text: String): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java),
+            Intent(this, com.office.tracker.ui.MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val stopIntent = PendingIntent.getService(
             this, 1,
             Intent(this, OfficeTrackingService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         return Notification.Builder(this, OfficeApp.NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Office Tracker")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pendingIntent)
-            .addAction(
-                Notification.Action.Builder(
-                    null, "Stop", stopIntent
-                ).build()
-            )
+            .addAction(Notification.Action.Builder(null, "Stop", stopIntent).build())
             .setOngoing(true)
             .build()
     }

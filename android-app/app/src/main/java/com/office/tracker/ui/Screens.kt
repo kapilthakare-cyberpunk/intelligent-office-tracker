@@ -622,8 +622,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                             departureStart.toIntOrNull() ?: 18,
                             departureEnd.toIntOrNull() ?: 21
                         )
-                        WindowScheduler.scheduleToday(context)
-                        WindowScheduler.scheduleTomorrow(context)
+                        WindowScheduler.ensureLatest(context)
                         saved = true
                     }
                 },
