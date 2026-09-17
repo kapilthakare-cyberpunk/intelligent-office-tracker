@@ -13,13 +13,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.office.tracker.OfficeApp
+import com.office.tracker.backup.BackupManager
 import com.office.tracker.db.OfficeVisit
 import com.office.tracker.service.WindowScheduler
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -469,6 +474,15 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     var departureEnd by remember { mutableStateOf("21") }
     var saved by remember { mutableStateOf(false) }
 
+    // Backup (GitHub auto-backup credentials live on-device only, never in git)
+    var ghToken by remember { mutableStateOf("") }
+    var ghOwner by remember { mutableStateOf("") }
+    var ghRepo by remember { mutableStateOf("") }
+    var ghBranch by remember { mutableStateOf("master") }
+    var backupEnabled by remember { mutableStateOf(false) }
+    var backupResult by remember { mutableStateOf<String?>(null) }
+    var backupLastText by remember { mutableStateOf("never") }
+
     // Work days (Calendar.DAY_OF_SUNDAY..SATURDAY)
     val workDays = remember {
         mutableStateOf(
@@ -492,6 +506,13 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             loaded[dow] = com.office.tracker.util.Prefs.isWorkDay(context, dow)
         }
         workDays.value = loaded
+        // Load backup settings
+        ghToken = com.office.tracker.util.Prefs.getGitHubToken(context)
+        ghOwner = com.office.tracker.util.Prefs.getGitHubOwner(context)
+        ghRepo = com.office.tracker.util.Prefs.getGitHubRepo(context)
+        ghBranch = com.office.tracker.util.Prefs.getGitHubBranch(context)
+        backupEnabled = com.office.tracker.util.Prefs.getBackupEnabled(context)
+        backupLastText = lastBackupText(context)
     }
 
     LazyColumn(
@@ -641,5 +662,138 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 )
             }
         }
+
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Backup", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(
+                "Daily auto-backup uploads to GitHub. The token stays on this device only.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            var tokenVisible by remember { mutableStateOf(false) }
+            OutlinedTextField(
+                value = ghToken,
+                onValueChange = { ghToken = it },
+                label = { Text("GitHub token (repo scope)") },
+                singleLine = true,
+                visualTransformation = if (tokenVisible) VisualTransformation.None
+                else PasswordVisualTransformation(),
+                trailingIcon = {
+                    TextButton(onClick = { tokenVisible = !tokenVisible }) {
+                        Text(if (tokenVisible) "Hide" else "Show")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = ghOwner,
+                    onValueChange = { ghOwner = it },
+                    label = { Text("Owner") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = ghRepo,
+                    onValueChange = { ghRepo = it },
+                    label = { Text("Repo") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        item {
+            OutlinedTextField(
+                value = ghBranch,
+                onValueChange = { ghBranch = it },
+                label = { Text("Branch") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Daily auto-backup", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = backupEnabled,
+                    onCheckedChange = {
+                        backupEnabled = it
+                        scope.launch {
+                            com.office.tracker.util.Prefs.setBackupEnabled(context, it)
+                        }
+                    }
+                )
+            }
+        }
+
+        item {
+            Button(
+                onClick = {
+                    scope.launch {
+                        com.office.tracker.util.Prefs.setGitHubToken(context, ghToken.trim())
+                        com.office.tracker.util.Prefs.setGitHubOwner(context, ghOwner.trim())
+                        com.office.tracker.util.Prefs.setGitHubRepo(context, ghRepo.trim())
+                        com.office.tracker.util.Prefs.setGitHubBranch(
+                            context, ghBranch.trim().ifEmpty { "master" }
+                        )
+                        backupResult = "Running backup…"
+                        val msg = withContext(Dispatchers.IO) {
+                            BackupManager.backupNow(context)
+                        }
+                        backupResult = msg
+                        backupLastText = lastBackupText(context)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Backup now")
+            }
+        }
+
+        backupResult?.let { result ->
+            item {
+                Text(
+                    result,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        item {
+            Text(
+                "Last backup: $backupLastText",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private suspend fun lastBackupText(context: android.content.Context): String {
+    val millis = com.office.tracker.util.Prefs.getBackupLast(context)
+    if (millis <= 0L) return "never"
+    return try {
+        val fmt = java.text.SimpleDateFormat(
+            "yyyy-MM-dd HH:mm", java.util.Locale.getDefault()
+        )
+        fmt.format(java.util.Date(millis))
+    } catch (e: Exception) {
+        "never"
     }
 }
