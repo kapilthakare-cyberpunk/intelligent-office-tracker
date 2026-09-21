@@ -1,0 +1,188 @@
+{
+  "visits": [
+    {
+      "date": "2026-09-18",
+      "arrivalTime": "11:00",
+      "departureTime": "11:03",
+      "arrivalTimestamp": 1789709442119,
+      "departureTimestamp": 1789709625630,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-17",
+      "arrivalTime": "10:19",
+      "departureTime": "11:59",
+      "arrivalTimestamp": 1789620567127,
+      "departureTimestamp": 1789626574347,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-16",
+      "arrivalTime": "10:00",
+      "departureTime": "18:46",
+      "arrivalTimestamp": 1789533059730,
+      "departureTimestamp": 1789564612335,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-15",
+      "arrivalTime": "11:09",
+      "departureTime": "19:23",
+      "arrivalTimestamp": 1789450774213,
+      "departureTimestamp": 1789480395424,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-10",
+      "arrivalTime": "14:40",
+      "departureTime": "19:13",
+      "arrivalTimestamp": 1789031412435,
+      "departureTimestamp": 1789047790433,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-09",
+      "arrivalTime": "10:53",
+      "departureTime": "19:25",
+      "arrivalTimestamp": 1788931387096,
+      "departureTimestamp": 1788962137218,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-08",
+      "arrivalTime": "18:24",
+      "departureTime": null,
+      "arrivalTimestamp": 1788872053600,
+      "departureTimestamp": 0,
+      "isCurrentlyAtOffice": true
+    },
+    {
+      "date": "2026-09-03",
+      "arrivalTime": "10:55",
+      "departureTime": "18:39",
+      "arrivalTimestamp": 1788413104803,
+      "departureTimestamp": 1788440979232,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-02",
+      "arrivalTime": "11:10",
+      "departureTime": "18:46",
+      "arrivalTimestamp": 1788327622437,
+      "departureTimestamp": 1788355006073,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-09-01",
+      "arrivalTime": "10:08",
+      "departureTime": "19:23",
+      "arrivalTimestamp": 1788237483312,
+      "departureTimestamp": 1788270789034,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-31",
+      "arrivalTime": "18:24",
+      "departureTime": "19:22",
+      "arrivalTimestamp": 1788180873136,
+      "departureTimestamp": 1788184320191,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-29",
+      "arrivalTime": "19:47",
+      "departureTime": "19:47",
+      "arrivalTimestamp": 1788013048065,
+      "departureTimestamp": 1788013074120,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-27",
+      "arrivalTime": "14:40",
+      "departureTime": "20:15",
+      "arrivalTimestamp": 1787821848772,
+      "departureTimestamp": 1787841903897,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-26",
+      "arrivalTime": "10:18 am",
+      "departureTime": "7:48 pm",
+      "arrivalTimestamp": 1787719680000,
+      "departureTimestamp": 1787753880000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-25",
+      "arrivalTime": "2:40 pm",
+      "departureTime": "6:51 pm",
+      "arrivalTimestamp": 1787649000000,
+      "departureTimestamp": 1787664060000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-24",
+      "arrivalTime": "10:50 am",
+      "departureTime": "7:17 pm",
+      "arrivalTimestamp": 1787548800000,
+      "departureTimestamp": 1787579220000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-23",
+      "arrivalTime": null,
+      "departureTime": null,
+      "arrivalTimestamp": 0,
+      "departureTimestamp": 0,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-22",
+      "arrivalTime": "9:58 am",
+      "departureTime": "6:49 pm",
+      "arrivalTimestamp": 1787372880000,
+      "departureTimestamp": 1787404740000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-21",
+      "arrivalTime": "11:01 am",
+      "departureTime": "7:17 pm",
+      "arrivalTimestamp": 1787302860000,
+      "departureTimestamp": 1787332620000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-20",
+      "arrivalTime": "11:48 am",
+      "departureTime": "8:15 pm",
+      "arrivalTimestamp": 1787229480000,
+      "departureTimestamp": 1787262300000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-19",
+      "arrivalTime": "10:18 am",
+      "departureTime": "6:56 pm",
+      "arrivalTimestamp": 1787136660000,
+      "departureTimestamp": 1787165760000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-18",
+      "arrivalTime": "11:35 am",
+      "departureTime": "7:31 pm",
+      "arrivalTimestamp": 1787049300000,
+      "departureTimestamp": 1787081460000,
+      "isCurrentlyAtOffice": false
+    },
+    {
+      "date": "2026-08-17",
+      "arrivalTime": "11:46 am",
+      "departureTime": "7:15 pm",
+      "arrivalTimestamp": 1786963560000,
+      "departureTimestamp": 1786994100000,
+      "isCurrentlyAtOffice": false
+    }
+  ]
+}
